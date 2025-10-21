@@ -1,0 +1,32 @@
+# Personal Kayas Profile
+# Customize your assistant's behavior and preferences
+
+# File handling preferences
+files:
+  notes_filename: "daily-notes.txt"      # Default filename for notes
+  auto_organize: true                    # Organize files by topic/date
+
+# Web search preferences  
+web:
+  search_engine: "duckduckgo"           # google, duckduckgo, brave, bing
+  
+# Safety and confirmation settings
+safety:
+  default_delete: "archive"             # archive (safer) or delete
+  auto_confirm_safe: true               # Auto-confirm archive operations
+  
+# Voice and personality
+voice:
+  enabled: true
+  response_style: "concise"             # concise, friendly, detailed
+  
+# Model preferences
+models:
+  strong_model: ""                      # Fallback model for complex tasks
+  
+# Personal workspace organization
+workspace:
+  project_folders: 
+    - "notes"
+    - "research" 
+    - "projects"
