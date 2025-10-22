@@ -123,13 +123,14 @@ class VoiceAgent:
             
         try:
             if self._tts_engine and self.cfg.tts_engine == "pyttsx3":
-                # Run TTS in a separate thread to avoid blocking
-                def _speak():
+                # Use a lock to prevent concurrent TTS operations
+                if not hasattr(self, '_tts_lock'):
+                    self._tts_lock = threading.Lock()
+                
+                # Don't run in thread - pyttsx3 doesn't like multiple threads
+                with self._tts_lock:
                     self._tts_engine.say(text)
                     self._tts_engine.runAndWait()
-                
-                thread = threading.Thread(target=_speak, daemon=True)
-                thread.start()
                 return True
             elif self.cfg.tts_engine == "coqui":
                 # TODO: Implement Coqui TTS

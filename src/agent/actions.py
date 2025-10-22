@@ -36,6 +36,16 @@ class Router:
         self.executors = executors
         self.safety = safety
 
+    def route(self, action_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Route an action dict like {"action": "tool.method", "args": {...}} or {"tool": "...", "args": {...}} to the appropriate executor."""
+        # Support both "action" and "tool" keys for compatibility
+        action_str = action_data.get("action") or action_data.get("tool", "")
+        args = action_data.get("args", {})
+        
+        # Convert to Action object for dispatch
+        action = Action(tool=action_str, args=args)
+        return self.dispatch(action)
+
     def dispatch(self, action: Action) -> Dict[str, Any]:
         t = action.tool
         a = action.args
@@ -164,6 +174,286 @@ class Router:
                 return self.executors["spotify"].add_tracks_to_playlist(
                     playlist_id=a["playlist_id"],
                     track_uris=a["track_uris"]
+                )
+            # Process executor
+            if t == "process.run_command":
+                return self.executors["process"].run_command(
+                    command=a["command"],
+                    timeout=a.get("timeout"),
+                    shell=a.get("shell"),
+                    working_dir=a.get("working_dir")
+                )
+            if t == "process.start_program":
+                return self.executors["process"].start_program(
+                    program=a["program"],
+                    args=a.get("args"),
+                    background=a.get("background", True),
+                    process_id=a.get("process_id")
+                )
+            if t == "process.kill_process":
+                return self.executors["process"].kill_process(
+                    process_id=a.get("process_id"),
+                    pid=a.get("pid"),
+                    name=a.get("name")
+                )
+            if t == "process.list_processes":
+                return self.executors["process"].list_processes(
+                    filter_name=a.get("filter_name")
+                )
+            if t == "process.get_system_info":
+                return self.executors["process"].get_system_info()
+            # Clipboard executor
+            if t == "clipboard.copy_text":
+                return self.executors["clipboard"].copy_text(
+                    text=a["text"],
+                    add_to_history=a.get("add_to_history", True)
+                )
+            if t == "clipboard.paste_text":
+                return self.executors["clipboard"].paste_text()
+            if t == "clipboard.copy_image":
+                return self.executors["clipboard"].copy_image(
+                    image_path=a.get("image_path"),
+                    add_to_history=a.get("add_to_history", True)
+                )
+            if t == "clipboard.paste_image":
+                return self.executors["clipboard"].paste_image(
+                    save_path=a.get("save_path")
+                )
+            if t == "clipboard.get_history":
+                return self.executors["clipboard"].get_history(
+                    limit=a.get("limit")
+                )
+            if t == "clipboard.clear_history":
+                return self.executors["clipboard"].clear_history()
+            # Network executor
+            if t == "network.http_request":
+                return self.executors["network"].http_request(
+                    url=a["url"],
+                    method=a.get("method", "GET"),
+                    headers=a.get("headers"),
+                    data=a.get("data"),
+                    json_data=a.get("json"),
+                    params=a.get("params"),
+                    timeout=a.get("timeout")
+                )
+            if t == "network.download_file":
+                return self.executors["network"].download_file(
+                    url=a["url"],
+                    save_path=a["save_path"],
+                    chunk_size=a.get("chunk_size", 8192),
+                    show_progress=a.get("show_progress", True)
+                )
+            if t == "network.upload_file":
+                return self.executors["network"].upload_file(
+                    url=a["url"],
+                    file_path=a["file_path"],
+                    field_name=a.get("field_name", "file"),
+                    additional_data=a.get("additional_data")
+                )
+            if t == "network.get_url_info":
+                return self.executors["network"].get_url_info(url=a["url"])
+            if t == "network.check_connectivity":
+                return self.executors["network"].check_connectivity(
+                    hosts=a.get("hosts")
+                )
+            # FileWatcher executor
+            if t == "filewatcher.watch_directory":
+                return self.executors["filewatcher"].watch_directory(
+                    path=a["path"],
+                    watch_id=a.get("watch_id")
+                )
+            if t == "filewatcher.stop_watching":
+                return self.executors["filewatcher"].stop_watching(
+                    watch_id=a["watch_id"]
+                )
+            if t == "filewatcher.get_active_watches":
+                return self.executors["filewatcher"].get_active_watches()
+            if t == "filewatcher.get_event_log":
+                return self.executors["filewatcher"].get_event_log(
+                    watch_id=a.get("watch_id"),
+                    limit=a.get("limit", 50)
+                )
+            if t == "filewatcher.clear_event_log":
+                return self.executors["filewatcher"].clear_event_log()
+            # LLM executor
+            if t == "llm.generate":
+                return self.executors["llm"].generate(
+                    prompt=a["prompt"],
+                    system=a.get("system"),
+                    temperature=a.get("temperature", 0.7),
+                    max_tokens=a.get("max_tokens")
+                )
+            if t == "llm.chat":
+                return self.executors["llm"].chat(
+                    messages=a["messages"],
+                    system=a.get("system"),
+                    temperature=a.get("temperature", 0.7),
+                    max_tokens=a.get("max_tokens")
+                )
+            if t == "llm.summarize":
+                return self.executors["llm"].summarize(
+                    text=a["text"],
+                    max_length=a.get("max_length", 100)
+                )
+            if t == "llm.chain_of_thought":
+                return self.executors["llm"].chain_of_thought(
+                    problem=a["problem"],
+                    steps=a.get("steps")
+                )
+            if t == "llm.few_shot_learning":
+                return self.executors["llm"].few_shot_learning(
+                    examples=a["examples"],
+                    query=a["query"]
+                )
+            if t == "llm.embeddings":
+                return self.executors["llm"].embeddings(
+                    texts=a["texts"]
+                )
+            # Phase 1: UI Automation tools
+            if t == "uia.find_window":
+                return self.executors["uia"].find_window(
+                    title=a.get("title"),
+                    class_name=a.get("class_name"),
+                    process_id=a.get("process_id"),
+                    best_match=a.get("best_match")
+                )
+            if t == "uia.list_windows":
+                return self.executors["uia"].list_windows()
+            if t == "uia.click_button":
+                return self.executors["uia"].click_button(
+                    window_title=a["window_title"],
+                    button_text=a.get("button_text"),
+                    button_id=a.get("button_id"),
+                    button_class=a.get("button_class")
+                )
+            if t == "uia.type_text":
+                return self.executors["uia"].type_text(
+                    window_title=a["window_title"],
+                    text=a["text"],
+                    control_id=a.get("control_id"),
+                    control_type=a.get("control_type")
+                )
+            if t == "uia.read_text":
+                return self.executors["uia"].read_text(
+                    window_title=a["window_title"],
+                    control_id=a.get("control_id")
+                )
+            if t == "uia.get_menu_items":
+                return self.executors["uia"].get_menu_items(
+                    window_title=a["window_title"]
+                )
+            if t == "uia.click_menu_item":
+                return self.executors["uia"].click_menu_item(
+                    window_title=a["window_title"],
+                    menu_path=a["menu_path"]
+                )
+            if t == "uia.focus_window":
+                return self.executors["uia"].focus_window(
+                    window_title=a["window_title"]
+                )
+            if t == "uia.close_window":
+                return self.executors["uia"].close_window(
+                    window_title=a["window_title"]
+                )
+            if t == "uia.get_control_tree":
+                return self.executors["uia"].get_control_tree(
+                    window_title=a["window_title"]
+                )
+            # Phase 1: OCR tools
+            if t == "ocr.find_text":
+                return self.executors["ocr"].find_text_on_screen(
+                    search_text=a["text"],
+                    region=a.get("region"),
+                    case_sensitive=a.get("case_sensitive", False)
+                )
+            if t == "ocr.click_text":
+                return self.executors["ocr"].click_text(
+                    text=a["text"],
+                    region=a.get("region"),
+                    button=a.get("button", "left"),
+                    clicks=a.get("clicks", 1)
+                )
+            if t == "ocr.read_screen":
+                return self.executors["ocr"].read_screen_text(
+                    region=a.get("region")
+                )
+            if t == "ocr.wait_for_text":
+                return self.executors["ocr"].wait_for_text(
+                    text=a["text"],
+                    timeout=a.get("timeout", 10),
+                    region=a.get("region")
+                )
+            if t == "ocr.get_text_near":
+                return self.executors["ocr"].get_text_near_position(
+                    x=a["x"],
+                    y=a["y"],
+                    radius=a.get("radius", 50)
+                )
+            if t == "ocr.find_buttons":
+                return self.executors["ocr"].find_buttons(
+                    region=a.get("region")
+                )
+            # Phase 1: Perception Engine (smart tools)
+            if t == "perception.smart_click":
+                return self.executors["perception"].smart_click(
+                    target=a["target"],
+                    context=a.get("context", {})
+                )
+            if t == "perception.smart_type":
+                return self.executors["perception"].smart_type(
+                    text=a["text"],
+                    context=a.get("context", {})
+                )
+            if t == "perception.smart_read":
+                return self.executors["perception"].smart_read(
+                    context=a.get("context", {})
+                )
+            if t == "perception.find_element":
+                return self.executors["perception"].find_element(
+                    description=a["description"],
+                    context=a.get("context", {})
+                )
+            if t == "perception.get_capabilities":
+                return self.executors["perception"].get_capabilities()
+            # Phase 1: Computer Vision tools
+            if t == "cv.find_image":
+                return self.executors["cv"].find_image_on_screen(
+                    template_path=a["template_path"],
+                    confidence=a.get("confidence"),
+                    region=a.get("region"),
+                    multi_match=a.get("multi_match")
+                )
+            if t == "cv.click_image":
+                return self.executors["cv"].click_image(
+                    template_path=a["template_path"],
+                    confidence=a.get("confidence"),
+                    region=a.get("region"),
+                    button=a.get("button", "left"),
+                    clicks=a.get("clicks", 1)
+                )
+            if t == "cv.wait_for_image":
+                return self.executors["cv"].wait_for_image(
+                    template_path=a["template_path"],
+                    timeout=a.get("timeout", 10),
+                    confidence=a.get("confidence"),
+                    region=a.get("region")
+                )
+            if t == "cv.find_by_feature":
+                return self.executors["cv"].find_by_feature_matching(
+                    template_path=a["template_path"],
+                    region=a.get("region"),
+                    min_matches=a.get("min_matches", 10)
+                )
+            if t == "cv.find_by_color":
+                return self.executors["cv"].find_by_color(
+                    color_range=a["color_range"],
+                    region=a.get("region"),
+                    min_area=a.get("min_area", 100)
+                )
+            if t == "cv.screenshot":
+                return self.executors["cv"].save_screenshot(
+                    filename=a["filename"],
+                    region=a.get("region")
                 )
         except Exception as e:
             return {"error": str(e), "tool": t, "args": a}

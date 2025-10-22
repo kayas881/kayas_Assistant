@@ -3,8 +3,13 @@
 Main entry point for the Kayas AI Assistant with voice capabilities.
 """
 import sys
+import os
 import argparse
 from pathlib import Path
+
+# Fix COM threading for pywinauto - MUST be before any imports
+if sys.platform == "win32":
+    os.environ.setdefault('PYWINAUTO_COINIT_FLAGS', '0')
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))

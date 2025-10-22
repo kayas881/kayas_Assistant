@@ -198,6 +198,34 @@ def smtp_config() -> dict:
     }
 
 
+def github_config() -> dict:
+    return {
+        "token": env_str("GITHUB_TOKEN", str(profile_get("apis.github.token", ""))),
+        "username": env_str("GITHUB_USERNAME", str(profile_get("apis.github.username", ""))),
+    }
+
+
+def notion_config() -> dict:
+    return {
+        "token": env_str("NOTION_TOKEN", str(profile_get("apis.notion.token", ""))),
+    }
+
+
+def trello_config() -> dict:
+    return {
+        "api_key": env_str("TRELLO_API_KEY", str(profile_get("apis.trello.api_key", ""))),
+        "token": env_str("TRELLO_TOKEN", str(profile_get("apis.trello.token", ""))),
+    }
+
+
+def jira_config() -> dict:
+    return {
+        "url": env_str("JIRA_URL", str(profile_get("apis.jira.url", ""))),
+        "email": env_str("JIRA_EMAIL", str(profile_get("apis.jira.email", ""))),
+        "api_token": env_str("JIRA_API_TOKEN", str(profile_get("apis.jira.api_token", ""))),
+    }
+
+
 # Desktop automation (dangerous, off by default)
 def desktop_enabled() -> bool:
     # Enable only if explicitly set: env DESKTOP_AUTOMATION_ENABLED=1 or profile desktop.enabled: true

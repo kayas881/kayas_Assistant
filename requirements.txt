@@ -31,3 +31,21 @@ SpeechRecognition==3.10.0
 whisper==1.1.10
 sounddevice==0.4.6
 scipy==1.11.4
+
+# System and network executors
+psutil==5.9.8
+aiohttp==3.9.5
+watchdog==4.0.1
+Pillow==10.4.0
+pywin32==306
+
+# Media processing
+pydub==0.25.1
+PyAudio==0.2.14
+
+# Phase 1: Multi-layer perception (NEW)
+pywinauto==0.6.8  # Windows UI Automation - Layer A (most reliable)
+# pytesseract already included above
+# opencv-python already included above
+# Note: Tesseract OCR binary must be installed separately
+# Windows: https://github.com/UB-Mannheim/tesseract/wiki
