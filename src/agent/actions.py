@@ -359,6 +359,25 @@ class Router:
                 return self.executors["uia"].get_control_tree(
                     window_title=a["window_title"]
                 )
+            if t == "uia.set_slider_value":
+                return self.executors["uia"].set_slider_value(
+                    window_title=a["window_title"],
+                    target=a["target"],
+                    value=a["value"],
+                    control_id=a.get("control_id")
+                )
+            if t == "uia.select_dropdown":
+                return self.executors["uia"].select_dropdown(
+                    window_title=a["window_title"],
+                    dropdown_id=a["dropdown_id"],
+                    item_text=a["item_text"]
+                )
+            if t == "uia.check_checkbox":
+                return self.executors["uia"].check_checkbox(
+                    window_title=a["window_title"],
+                    checkbox_text=a["checkbox_text"],
+                    checked=a.get("checked", True)
+                )
             # Phase 1: OCR tools
             if t == "ocr.find_text":
                 return self.executors["ocr"].find_text_on_screen(
@@ -413,6 +432,8 @@ class Router:
                     description=a["description"],
                     context=a.get("context", {})
                 )
+            if t == "perception.get_screen_elements":
+                return self.executors["perception"].get_screen_elements()
             if t == "perception.get_capabilities":
                 return self.executors["perception"].get_capabilities()
             # Phase 1: Computer Vision tools

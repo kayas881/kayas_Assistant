@@ -20,6 +20,9 @@ except ImportError:
     STT_AVAILABLE = False
 
 try:
+    # Note: we intentionally avoid initializing pyttsx3 on the main thread.
+    # Importing is safe; initialization happens inside a dedicated worker thread
+    # to prevent COM threading conflicts with pywinauto (UIA requires MTA).
     import pyttsx3
     PYTTSX3_AVAILABLE = True
 except ImportError:
@@ -60,13 +63,17 @@ class VoiceAgent:
     def __init__(self, cfg: VoiceConfig | None = None):
         self.cfg = cfg or VoiceConfig()
         self._whisper_model: Optional[Any] = None
-        self._tts_engine: Optional[Any] = None
+        self._tts_engine: Optional[Any] = None  # legacy direct engine (unused when worker enabled)
         self._recognizer: Optional[sr.Recognizer] = None
         self._microphone: Optional[sr.Microphone] = None
         self._recording = False
         self._listening = False
         self._stop_listening: Optional[Callable] = None
         self._audio_queue: queue.Queue = queue.Queue()
+        self._tts_queue: "queue.Queue[tuple[str, Optional[threading.Event]] ]" = queue.Queue()
+        self._tts_thread: Optional[threading.Thread] = None
+        self._tts_worker_ready: threading.Event = threading.Event()
+        self._tts_shutdown: threading.Event = threading.Event()
         
         self._init_stt()
         self._init_tts()
@@ -95,26 +102,54 @@ class VoiceAgent:
                 print(f"Failed to adjust for ambient noise: {e}")
 
     def _init_tts(self):
-        """Initialize text-to-speech engine."""
+        """Initialize text-to-speech. For pyttsx3, spin up a dedicated worker thread to isolate COM."""
         if self.cfg.tts_engine == "pyttsx3" and PYTTSX3_AVAILABLE:
-            try:
-                self._tts_engine = pyttsx3.init()
-                # Configure voice properties
-                voices = self._tts_engine.getProperty('voices')
-                if voices:
-                    # Prefer female voice if available
-                    for voice in voices:
-                        if 'female' in voice.name.lower() or 'zira' in voice.name.lower():
-                            self._tts_engine.setProperty('voice', voice.id)
+            # Launch a background worker thread that owns the pyttsx3 engine.
+            def _tts_worker():
+                try:
+                    # Initialize engine INSIDE this thread to set COM apartment appropriately (STA)
+                    engine = pyttsx3.init()
+                    # Configure voice properties
+                    voices = engine.getProperty('voices')
+                    if voices:
+                        for voice in voices:
+                            if 'female' in voice.name.lower() or 'zira' in voice.name.lower():
+                                engine.setProperty('voice', voice.id)
+                                break
+                    engine.setProperty('rate', 180)
+                    engine.setProperty('volume', 0.8)
+
+                    self._tts_worker_ready.set()
+                    print("TTS worker thread initialized")
+
+                    while not self._tts_shutdown.is_set():
+                        try:
+                            item = self._tts_queue.get(timeout=0.1)
+                        except queue.Empty:
+                            continue
+                        if item is None:
                             break
-                
-                # Set speech rate and volume
-                self._tts_engine.setProperty('rate', 180)  # words per minute
-                self._tts_engine.setProperty('volume', 0.8)  # 0.0 to 1.0
-                print("TTS engine initialized successfully")
-            except Exception as e:
-                print(f"Failed to initialize TTS engine: {e}")
-                self._tts_engine = None
+                        text, done_evt = item
+                        try:
+                            engine.say(text)
+                            engine.runAndWait()
+                        except Exception as speak_err:
+                            print(f"TTS worker error: {speak_err}")
+                        finally:
+                            if done_evt is not None:
+                                done_evt.set()
+                except Exception as e:
+                    # If initialization fails, signal readiness anyway to avoid deadlock
+                    print(f"Failed to initialize TTS worker: {e}")
+                    self._tts_worker_ready.set()
+
+            self._tts_thread = threading.Thread(target=_tts_worker, name="TTSWorker", daemon=True)
+            self._tts_thread.start()
+            # Wait briefly for the worker to be ready, but don't block indefinitely
+            self._tts_worker_ready.wait(timeout=3.0)
+        else:
+            # Coqui or text fallback doesn't require special setup
+            pass
 
     def speak(self, text: str) -> bool:
         """Convert text to speech."""
@@ -122,15 +157,21 @@ class VoiceAgent:
             return True
             
         try:
-            if self._tts_engine and self.cfg.tts_engine == "pyttsx3":
-                # Use a lock to prevent concurrent TTS operations
-                if not hasattr(self, '_tts_lock'):
-                    self._tts_lock = threading.Lock()
-                
-                # Don't run in thread - pyttsx3 doesn't like multiple threads
-                with self._tts_lock:
-                    self._tts_engine.say(text)
-                    self._tts_engine.runAndWait()
+            if self.cfg.tts_engine == "pyttsx3" and PYTTSX3_AVAILABLE:
+                # Send to worker thread; block until spoken to preserve prior behavior
+                if self._tts_thread is None:
+                    # Fallback (unlikely): try direct init (may fail on COM conflict)
+                    try:
+                        self._tts_engine = pyttsx3.init()
+                        self._tts_engine.say(text)
+                        self._tts_engine.runAndWait()
+                        return True
+                    except Exception as e:
+                        print(f"TTS direct init failed: {e}")
+                        # Fall through to text print
+                done = threading.Event()
+                self._tts_queue.put((text, done))
+                done.wait(timeout=30.0)
                 return True
             elif self.cfg.tts_engine == "coqui":
                 # TODO: Implement Coqui TTS
@@ -303,3 +344,11 @@ class VoiceAgent:
     def __del__(self):
         """Cleanup resources."""
         self.stop_continuous_listening()
+        # Stop TTS worker
+        try:
+            self._tts_shutdown.set()
+            if self._tts_thread and self._tts_thread.is_alive():
+                # Unblock queue.get
+                self._tts_queue.put(None)  # type: ignore[arg-type]
+        except Exception:
+            pass

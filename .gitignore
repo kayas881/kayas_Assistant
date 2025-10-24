@@ -64,3 +64,157 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.pyc
+
+# Documentation - generated outputs and build artifacts
+# Ignore common documentation sources and their build output (Sphinx, MkDocs, MkDocs site, local HTML/PDF/EPUB builds)
+docs/
+docs/_build/
+build/docs/
+site/
+doc/
+docs_output/
+.sphinx-cache/
+.cache/sphinx/
+
+# Common generated document formats
+*.pdf
+*.docx
+*.pptx
+*.html
+*.epub
+*.chm
+*.zip
+*.tar
+*.tar.gz
+
+# LaTeX auxiliary files created by Sphinx or other documentation tools
+*.aux
+*.toc
+*.out
+*.lof
+*.lot
+*.idx
+*.ilg
+*.ind
+
+# Notebook checkpoints and outputs
+.ipynb_checkpoints/
+
+# OS and editor artifacts often appearing in doc dirs
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.logs
+*.log.*
+logs/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.swp~
+*.swo~
+*~
+.*.swp
+.*.swo
+
+# OS-specific files
+desktop.ini
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+*.lnk
+
+# Python bytecode and cache
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+.eggs/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# macOS
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+[Tt]humbs.db
+[Tt]humbs.db:encryptable
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# IDE and editor files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+.history/
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.tmproj
+*.tmproject
+.vs/
+
+# Temporary/scratch files
+scratch.*
+temp.*
+tmp.*
+TODO.txt
+notes.txt
+debug.txt
+output.txt
+temp/
+tmp/
+
+# Model training artifacts - markdown documentation and scripts
+model_training/*.md
+model_training/*.py
+model_training/*.bat
+model_training/*.ps1
+model_training/*.ipynb
+model_training/*.txt
+model_training/*.log
+
+# Large training data files (use Google Drive or Git LFS instead)
+model_training/training_data_auto/
+model_training/training_data_auto/*.json
+model_training/training_data_auto/*.png
+model_training/training_data_auto/dataset.json
+model_training/training_data_auto/bboxes.json

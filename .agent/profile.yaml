@@ -1,6 +1,17 @@
 # Personal Kayas Profile
 # Customize your assistant's behavior and preferences
 
+# Planning mode (IMPORTANT: Enables advanced autonomous capabilities)
+planning:
+  mode: "react"  # 'structured' (one-shot) or 'react' (iterative reasoning with vision)
+  react:
+    max_steps: 10  # Maximum reasoning steps for complex tasks
+    beam_width: 3  # Number of actions to consider at each step
+
+# Desktop automation (REQUIRED for ReAct mode UI tasks)
+desktop:
+  enabled: true  # Enable desktop UI control and perception
+
 # File handling preferences
 files:
   notes_filename: "daily-notes.txt"      # Default filename for notes
@@ -22,7 +33,9 @@ voice:
   
 # Model preferences
 models:
+  main_model: "llama3"                  # Main reasoning model (llama3, mistral, etc.)
   strong_model: ""                      # Fallback model for complex tasks
+  vision_model: "llava"                 # Vision model for screen analysis
   
 # Personal workspace organization
 workspace:

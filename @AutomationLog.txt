@@ -1,0 +1,1 @@
+2025-10-23 10:22:12.359 automated_collector.py[402] perform_random_interaction -> Can not move cursor. ButtonControl's BoundingRectangle is (0,0,0,0)[0x0]. SearchProperties: {ControlType: ButtonControl}

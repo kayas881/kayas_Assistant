@@ -26,8 +26,23 @@ class SpotifyExecutor:
     def __init__(self, cfg: SpotifyConfig):
         self.cfg = cfg
         self.sp = None
+        self._auth_error: Optional[str] = None
         if SPOTIFY_AVAILABLE:
-            self._authenticate()
+            # Validate configuration before attempting OAuth
+            missing = []
+            if not (self.cfg.client_id or "").strip():
+                missing.append("SPOTIFY_CLIENT_ID")
+            if not (self.cfg.client_secret or "").strip():
+                missing.append("SPOTIFY_CLIENT_SECRET")
+            if not (self.cfg.redirect_uri or "").strip():
+                missing.append("SPOTIFY_REDIRECT_URI")
+            if missing:
+                self._auth_error = (
+                    "Spotify credentials missing: " + ", ".join(missing) + ". "
+                    "Set them as environment variables or in your profile YAML under apis.spotify.*"
+                )
+            else:
+                self._authenticate()
 
     def _authenticate(self):
         """Authenticate with Spotify API"""
@@ -40,12 +55,13 @@ class SpotifyExecutor:
             )
             self.sp = spotipy.Spotify(auth_manager=auth_manager)
         except Exception as e:
-            print(f"Spotify authentication failed: {e}")
+            self._auth_error = f"Spotify authentication failed: {e}"
+            print(self._auth_error)
 
     def search_music(self, query: str, search_type: str = "track", limit: int = 10) -> Dict:
         """Search for music on Spotify"""
         if not SPOTIFY_AVAILABLE or not self.sp:
-            return {"error": "Spotify API not available or not authenticated"}
+            return {"error": self._auth_error or "Spotify API not available or not authenticated"}
         
         try:
             results = self.sp.search(q=query, type=search_type, limit=limit)
@@ -98,7 +114,7 @@ class SpotifyExecutor:
     def play_track(self, track_uri: str, device_id: Optional[str] = None) -> Dict:
         """Play a track on Spotify"""
         if not SPOTIFY_AVAILABLE or not self.sp:
-            return {"error": "Spotify API not available or not authenticated"}
+            return {"error": self._auth_error or "Spotify API not available or not authenticated"}
         
         try:
             self.sp.start_playback(device_id=device_id, uris=[track_uri])
@@ -114,7 +130,7 @@ class SpotifyExecutor:
     def play_query(self, query: str, device_id: Optional[str] = None) -> Dict:
         """Search for a track by query and play the top result."""
         if not SPOTIFY_AVAILABLE or not self.sp:
-            return {"error": "Spotify API not available or not authenticated"}
+            return {"error": self._auth_error or "Spotify API not available or not authenticated"}
 
         try:
             results = self.sp.search(q=query, type="track", limit=1)
@@ -144,7 +160,7 @@ class SpotifyExecutor:
     def get_current_playing(self) -> Dict:
         """Get currently playing track"""
         if not SPOTIFY_AVAILABLE or not self.sp:
-            return {"error": "Spotify API not available or not authenticated"}
+            return {"error": self._auth_error or "Spotify API not available or not authenticated"}
         
         try:
             current = self.sp.current_playback()
@@ -183,7 +199,7 @@ class SpotifyExecutor:
     def pause_playback(self, device_id: Optional[str] = None) -> Dict:
         """Pause current playback"""
         if not SPOTIFY_AVAILABLE or not self.sp:
-            return {"error": "Spotify API not available or not authenticated"}
+            return {"error": self._auth_error or "Spotify API not available or not authenticated"}
         
         try:
             self.sp.pause_playback(device_id=device_id)
@@ -198,7 +214,7 @@ class SpotifyExecutor:
     def resume_playback(self, device_id: Optional[str] = None) -> Dict:
         """Resume current playback"""
         if not SPOTIFY_AVAILABLE or not self.sp:
-            return {"error": "Spotify API not available or not authenticated"}
+            return {"error": self._auth_error or "Spotify API not available or not authenticated"}
         
         try:
             self.sp.start_playback(device_id=device_id)

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
+import tempfile
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -12,9 +15,23 @@ from ..training.preference_model import score_plan
 
 
 REACT_SYSTEM = (
-    "You are a ReAct agent. You reason step-by-step, then act using JSON tool calls, then observe the result, and repeat.\n"
+    "You are a ReAct agent with vision capabilities. You reason step-by-step, then act using JSON tool calls, then observe the screen and result, and repeat.\n"
     "At each turn, emit ONLY JSON with either:\n"
     "{\"thought\": string, \"actions\": [{\"tool\": string, \"args\": object}]} OR {\"finish\": string}.\n"
+    "\n"
+    "After each action, you will receive:\n"
+    "1. Tool result (success/error)\n"
+    "2. Screen analysis (what's visible on screen)\n"
+    "\n"
+    "Use this information to decide your next action. For desktop UI tasks:\n"
+    "- Use perception.smart_click to click buttons/controls\n"
+    "- Use perception.get_screen_elements to see what's on screen\n"
+    "- Use uia.set_slider_value to adjust sliders\n"
+    "- Use process.start_program to open apps\n"
+    "\n"
+    "For web tasks (ChatGPT, WhatsApp Web):\n"
+    "- Use browser.run_steps with goto, click, fill, type actions\n"
+    "\n"
     "Be concise, pick minimal actions, and avoid repeating failed steps."
 )
 
@@ -30,17 +47,74 @@ class ReactAgent:
     def __init__(self, llm: LLM, router: Router):
         self.llm = llm
         self.router = router
+        self._vision_executor = None
+        self._cv_executor = None
+        
+    def _init_vision(self):
+        """Lazy init vision executor for screen analysis"""
+        if self._vision_executor is None:
+            try:
+                from ..executors.vision_exec import VisionExecutor
+                self._vision_executor = VisionExecutor()
+            except Exception as e:
+                print(f"Vision not available: {e}")
+        if self._cv_executor is None:
+            try:
+                from ..executors.cv_exec import CVExecutor
+                self._cv_executor = CVExecutor()
+            except Exception as e:
+                print(f"CV not available: {e}")
+    
+    def _capture_screen_state(self) -> str:
+        """Capture and analyze current screen state"""
+        self._init_vision()
+        
+        try:
+            # Take screenshot
+            screenshot_path = Path(tempfile.gettempdir()) / f"react_screen_{int(time.time())}.png"
+            
+            if self._cv_executor:
+                result = self._cv_executor.screenshot(str(screenshot_path))
+                if not result.get("success"):
+                    return "Screen capture failed"
+            else:
+                return "Screen capture not available"
+            
+            # Analyze with vision model
+            if self._vision_executor:
+                analysis = self._vision_executor.analyze_screenshot(
+                    str(screenshot_path),
+                    question="What UI elements, buttons, text fields, and controls are visible on this screen? List them clearly."
+                )
+                
+                # Clean up screenshot
+                try:
+                    screenshot_path.unlink()
+                except:
+                    pass
+                
+                if analysis.get("success"):
+                    return analysis.get("answer", "No analysis available")
+                else:
+                    return f"Vision analysis failed: {analysis.get('error', 'unknown error')}"
+            else:
+                return "Vision analysis not available"
+                
+        except Exception as e:
+            return f"Screen observation error: {str(e)}"
 
-    def _prompt(self, goal: str, history: List[Tuple[str, Dict]]) -> str:
-        # History is [(observation_text, last_action_result_dict), ...]
+    def _prompt(self, goal: str, history: List[Tuple[str, Dict, str]]) -> str:
+        # History is [(thought, action_result_dict, screen_observation), ...]
         obs_lines: List[str] = []
-        for i, (thought, obs) in enumerate(history[-5:]):
+        for i, (thought, obs, screen) in enumerate(history[-5:]):
             obs_lines.append(f"Step {i+1} Thought: {thought}")
             if obs:
                 try:
-                    obs_lines.append("Observation: " + json.dumps(obs)[:800])
+                    obs_lines.append("Tool Result: " + json.dumps(obs)[:500])
                 except Exception:
-                    obs_lines.append("Observation: [unserializable]")
+                    obs_lines.append("Tool Result: [unserializable]")
+            if screen:
+                obs_lines.append(f"Screen: {screen[:500]}")
         ctx = "\n".join(obs_lines)
         return f"Goal: {goal}\n{ctx}\nNext JSON:"
 
@@ -48,7 +122,7 @@ class ReactAgent:
         max_steps = max_steps or react_max_steps()
         beam_width = beam_width or react_beam_width()
         traces: List[str] = []
-        history: List[Tuple[str, Dict]] = []
+        history: List[Tuple[str, Dict, str]] = []
         actions_taken: List[Dict] = []
 
         for step in range(max_steps):
@@ -103,8 +177,15 @@ class ReactAgent:
                         res = self.router.dispatch(a)
                         actions_taken.append({"tool": a.tool, "args": a.args, "result": res, "retry": True})
                 last_obs = res
+            
+            # Capture screen state for observation (if desktop UI action)
+            screen_observation = ""
+            if any(a.tool.startswith(prefix) for a in best_actions for prefix in ["perception.", "uia.", "process.start_program", "desktop."]):
+                print("[ReActAgent] Capturing screen state...")
+                time.sleep(1.5)  # Brief wait for UI to render
+                screen_observation = self._capture_screen_state()
 
             # Save thought + observation into history for the next step
-            history.append((thought, last_obs if isinstance(last_obs, dict) else {}))
+            history.append((thought, last_obs if isinstance(last_obs, dict) else {}, screen_observation))
 
         return ReactResult(final_text="Reached step limit.", actions_taken=actions_taken, raw_traces=traces)

@@ -137,8 +137,8 @@ class ConversationManager:
         enhanced_prompt = self._build_enhanced_prompt(user_input, context, relevant_context)
         
         try:
-            # Run the direct agent with just the user input, not the full enhanced prompt
-            result = self.agent.run(user_input)
+            # Run the direct agent with the user input AND conversation context
+            result = self.agent.run(user_input, conversation_context=context)
             
             # Extract response from agent result
             response = result.get("response", "I completed the task successfully.")

@@ -11,7 +11,7 @@ from ..agent.config import (
     artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, 
     search_root, smtp_config, google_calendar_config, slack_config, 
     spotify_config, desktop_enabled, github_config, notion_config,
-    trello_config, jira_config
+    trello_config, jira_config, planning_mode
 )
 from ..agent.llm import LLM
 from ..agent.planner import Planner
@@ -38,7 +38,7 @@ from ..executors.audio_exec import AudioExecutor, AudioConfig
 from ..executors.video_exec import VideoExecutor, VideoConfig
 from ..executors.vision_exec import VisionExecutor, VisionConfig
 from ..executors.llm_exec import LLMExecutor, LLMConfig
-from ..executors.uiautomation_exec import UIAutomationExecutor, UIAutomationConfig
+from ..executors.uia_proxy import UIAutomationProxy, UIAProxyConfig
 from ..executors.ocr_exec import OCRExecutor, OCRConfig
 from ..executors.cv_exec import CVExecutor, CVConfig
 from ..executors.perception_engine import PerceptionEngine, PerceptionConfig
@@ -54,6 +54,10 @@ class DirectAgent:
         self.llm = LLM(model=ollama_model())
         self.planner = Planner(self.llm)
         
+        # Detect planning mode
+        self.planning_mode = planning_mode()  # 'structured' or 'react'
+        print(f"[DirectAgent] Planning mode: {self.planning_mode}")
+        
         # Initialize executors
         self.fs = FileSystemExecutor(FSConfig(root=artifacts_dir()))
         self.local_search = LocalSearchExecutor(LocalSearchConfig(root=search_root()))
@@ -61,7 +65,13 @@ class DirectAgent:
         self.web_exec = WebExecutor(WebConfig())
         self.browser_exec = BrowserExecutor(BrowserConfig())
         
-        # System executors (always available)
+        # IMPORTANT: Run UI Automation in a separate process to avoid COM conflicts.
+        try:
+            self.uia_exec = UIAutomationProxy(UIAProxyConfig())
+        except Exception:
+            self.uia_exec = None
+        
+    # System executors (always available)
         self.process_exec = ProcessExecutor(ProcessConfig())
         self.clipboard_exec = ClipboardExecutor(ClipboardConfig())
         self.network_exec = NetworkExecutor(NetworkConfig())
@@ -134,11 +144,6 @@ class DirectAgent:
         
         # Phase 1: Multi-layer perception executors
         try:
-            self.uia_exec = UIAutomationExecutor(UIAutomationConfig())
-        except Exception:
-            self.uia_exec = None
-            
-        try:
             self.ocr_exec = OCRExecutor(OCRConfig())
         except Exception:
             self.ocr_exec = None
@@ -155,8 +160,8 @@ class DirectAgent:
         
         # Initialize router
         self.router = Router({
-            "filesystem": self.fs,
-            "local_search": self.local_search, 
+            "fs": self.fs,
+            "search": self.local_search, 
             "email": self.email_exec,
             "web": self.web_exec,
             "browser": self.browser_exec,
@@ -183,6 +188,14 @@ class DirectAgent:
             "perception": self.perception,
         })
         
+        # Initialize ReAct agent (for multi-step reasoning)
+        if self.planning_mode == "react":
+            from ..agent.react import ReactAgent
+            self.react_agent = ReactAgent(self.llm, self.router)
+            print("[DirectAgent] ReAct agent initialized")
+        else:
+            self.react_agent = None
+        
         # Initialize memory
         self.memory = SQLiteMemory(MemoryConfig(db_path=db_path()))
         self.vmem = VectorMemory(VectorMemoryConfig(
@@ -190,8 +203,13 @@ class DirectAgent:
             embed_model=embed_model()
         ))
 
-    def run(self, goal: str) -> Dict[str, Any]:
-        """Run the agent with a goal and return a conversational response."""
+    def run(self, goal: str, conversation_context: str = "") -> Dict[str, Any]:
+        """Run the agent with a goal and return a conversational response.
+        
+        Args:
+            goal: The user's request
+            conversation_context: Recent conversation history for context
+        """
         run_id = str(uuid.uuid4())
         self.memory.log_message(run_id, "user", goal)
         
@@ -207,6 +225,32 @@ class DirectAgent:
                     "response": response,
                     "run_id": run_id,
                     "type": "conversation"
+                }
+            
+            # Handle context-dependent follow-ups
+            enhanced_goal = self._resolve_context(goal, conversation_context)
+            if enhanced_goal != goal:
+                print(f"DEBUG: Resolved context from '{goal}' to '{enhanced_goal}'")
+                goal = enhanced_goal
+            
+            # Detect if this is a multi-step task that should use ReAct mode
+            is_complex_task = self._is_complex_task(goal)
+            
+            if is_complex_task and self.react_agent is not None:
+                print(f"[DirectAgent] Using ReAct mode for complex task: {goal}")
+                react_result = self.react_agent.run(goal, max_steps=10)
+                
+                # Generate conversational response from ReAct result
+                response = react_result.final_text or "I completed the task."
+                results = react_result.actions_taken
+                
+                self.memory.log_message(run_id, "assistant", response)
+                return {
+                    "response": response,
+                    "run_id": run_id,
+                    "type": "action",
+                    "results": results,
+                    "traces": react_result.raw_traces
                 }
             
             # Special handling for screen requests
@@ -253,6 +297,89 @@ class DirectAgent:
             
             if "cpu" in goal_lower or "memory" in goal_lower or "system" in goal_lower:
                 heuristic_plan = [{"tool": "process.get_system_info", "args": {}}]
+            elif goal_lower.startswith("open ") or (" open " in goal_lower):
+                # Try to resolve app name to a program path
+                import os
+                import glob
+                app = goal_lower.split("open ", 1)[1].strip().strip(".?!") if "open " in goal_lower else ""
+                app = app.replace("app", "").strip()
+                # Common windows app paths
+                candidates = []
+                user_profile = os.environ.get("USERPROFILE", "")
+                program_files = os.environ.get("ProgramFiles", r"C:\\Program Files")
+                program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)")
+                local_appdata = os.environ.get("LOCALAPPDATA", os.path.join(user_profile, "AppData", "Local"))
+                roaming_appdata = os.environ.get("APPDATA", os.path.join(user_profile, "AppData", "Roaming"))
+
+                def add(path: str):
+                    if path and os.path.exists(path):
+                        candidates.append(path)
+                
+                def add_glob(pattern: str):
+                    """Add first match from a glob pattern"""
+                    matches = glob.glob(pattern)
+                    if matches:
+                        candidates.append(matches[0])
+
+                # Check for multi-word app names FIRST (most specific to least specific)
+                # This prevents "microsoft teams" from being interpreted as just "microsoft"
+                if "microsoft teams" in app or "ms teams" in app or app == "teams":
+                    # New Teams uses WindowsApps execution alias
+                    add(os.path.join(local_appdata, "Microsoft", "WindowsApps", "ms-teams.exe"))
+                    # Try the new Teams in Packages
+                    add_glob(os.path.join(local_appdata, "Packages", "MSTeams_*", "LocalCache", "Microsoft", "MSTeams", "current", "Teams.exe"))
+                    # Old Teams paths
+                    add(os.path.join(local_appdata, "Microsoft", "Teams", "Update.exe"))
+                    add(os.path.join(local_appdata, "Microsoft", "Teams", "current", "Teams.exe"))
+                    # Windows Store version
+                    add_glob(os.path.join(program_files, "WindowsApps", "MSTeams_*", "ms-teams.exe"))
+                elif "visual studio code" in app or "vs code" in app or "vscode" in app:
+                    add(os.path.join(local_appdata, "Programs", "Microsoft VS Code", "Code.exe"))
+                    add(os.path.join(program_files, "Microsoft VS Code", "Code.exe"))
+                elif "google chrome" in app:
+                    add(os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"))
+                    add(os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"))
+                elif "microsoft edge" in app:
+                    add(os.path.join(program_files_x86, "Microsoft", "Edge", "Application", "msedge.exe"))
+                    add(os.path.join(program_files, "Microsoft", "Edge", "Application", "msedge.exe"))
+                # Single-word matches - only if multi-word didn't match
+                elif "chrome" in app:
+                    add(os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"))
+                    add(os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"))
+                elif "edge" in app:
+                    add(os.path.join(program_files_x86, "Microsoft", "Edge", "Application", "msedge.exe"))
+                    add(os.path.join(program_files, "Microsoft", "Edge", "Application", "msedge.exe"))
+                elif "notepad" in app:
+                    add(r"C:\\Windows\\System32\\notepad.exe")
+                elif "calculator" in app or "calc" in app:
+                    add(r"C:\\Windows\\System32\\calc.exe")
+                elif "spotify" in app:
+                    add(os.path.join(roaming_appdata, "Spotify", "Spotify.exe"))
+                    add_glob(os.path.join(program_files, "WindowsApps", "SpotifyAB.SpotifyMusic_*", "Spotify.exe"))
+                elif "cmd" in app or "command prompt" in app:
+                    add(r"C:\\Windows\\System32\\cmd.exe")
+                elif "powershell" in app:
+                    add(r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+                elif "word" in app:
+                    add_glob(os.path.join(program_files, "Microsoft Office", "root", "Office*", "WINWORD.EXE"))
+                elif "excel" in app:
+                    add_glob(os.path.join(program_files, "Microsoft Office", "root", "Office*", "EXCEL.EXE"))
+                elif "outlook" in app:
+                    add_glob(os.path.join(program_files, "Microsoft Office", "root", "Office*", "OUTLOOK.EXE"))
+
+                program_path = candidates[0] if candidates else None
+                if program_path:
+                    heuristic_plan = [{
+                        "tool": "process.start_program",
+                        "args": {"program": program_path, "background": True}
+                    }]
+                else:
+                    # Fall back to shell command using 'start' if we couldn't resolve a path
+                    # Note: 'start' is a shell builtin; run via cmd.exe
+                    heuristic_plan = [{
+                        "tool": "process.run_command",
+                        "args": {"command": f"start {app}", "shell": True}
+                    }]
             elif "copy" in goal_lower:
                 # Extract text to copy
                 import re
@@ -373,6 +500,62 @@ class DirectAgent:
                 "type": "error",
                 "error": str(e)
             }
+    
+    def _resolve_context(self, goal: str, conversation_context: str) -> str:
+        """Resolve references in the goal using conversation context.
+        
+        Handles follow-ups like:
+        - "I meant teams" -> "open microsoft teams"
+        - "no, the other one" -> infer from context
+        - "play it" -> infer what to play from previous messages
+        """
+        if not conversation_context:
+            return goal
+        
+        goal_lower = goal.lower()
+        
+        # Pattern: "I meant X" or "no, X" or "actually X"
+        if any(phrase in goal_lower for phrase in ["i meant", "no,", "actually", "i said"]):
+            import re
+            
+            # Extract what they meant
+            match = re.search(r"(?:i meant|no,?\s+|actually\s+|i said\s+)(.+?)(?:\.|$)", goal_lower)
+            if match:
+                correction = match.group(1).strip()
+                
+                # Check if previous message was about opening an app
+                if "open" in conversation_context.lower():
+                    # They're correcting what to open
+                    return f"open {correction}"
+                
+                # Check if it was about playing something
+                if "play" in conversation_context.lower():
+                    return f"play {correction}"
+                
+                # Check if it was about searching
+                if "search" in conversation_context.lower():
+                    return f"search for {correction}"
+        
+        # Pattern: Just the correction without context markers
+        # e.g., after "open microsoft" they just say "teams"
+        if len(goal.split()) <= 2:
+            # Single or double word might be completing a previous command
+            last_user_msg = ""
+            for line in reversed(conversation_context.split("\n")):
+                if line.strip().startswith(("user:", "You:")):
+                    last_user_msg = line.split(":", 1)[1].strip().lower()
+                    break
+            
+            if "open" in last_user_msg and last_user_msg != goal_lower:
+                # They're adding to the app name or correcting it
+                # Extract what came after "open"
+                app_part = last_user_msg.split("open", 1)[1].strip()
+                # Check if the new word is a continuation or replacement
+                if goal_lower not in app_part:
+                    # It's likely completing the name: "microsoft" + "teams" = "microsoft teams"
+                    return f"open {app_part} {goal}"
+        
+        return goal
 
     def _is_simple_question(self, goal: str) -> bool:
         """Check if this is a simple question that doesn't require actions."""
@@ -478,6 +661,41 @@ Just ask me naturally, like you would a friend! For example:
             return response
         except Exception:
             return "I'm not sure how to answer that. Could you try asking something else or give me a specific task to perform?"
+
+    def _is_complex_task(self, goal: str) -> bool:
+        """Detect if this is a multi-step task that should use ReAct mode.
+        
+        Complex tasks typically involve:
+        - Multiple actions ("open X and do Y")
+        - UI navigation ("lower brightness", "change settings")
+        - Web automation ("ask ChatGPT", "send WhatsApp message")
+        - Tasks requiring observation ("find the button", "see what's on screen")
+        """
+        goal_lower = goal.lower()
+        
+        # Multi-step indicators: "and", "then", "after"
+        multi_step_words = [" and ", " then ", " after "]
+        if any(word in goal_lower for word in multi_step_words):
+            return True
+        
+        # UI navigation tasks (require seeing the screen and clicking through)
+        ui_tasks = [
+            "settings", "brightness", "volume", "display", 
+            "control panel", "task manager", "navigate to",
+            "find the", "click on", "select the", "choose",
+            "lower", "raise", "increase", "decrease", "adjust",
+            "change", "modify", "configure"
+        ]
+        if any(task in goal_lower for task in ui_tasks):
+            return True
+        
+        # Web automation tasks (require browser navigation)
+        web_tasks = ["chatgpt", "whatsapp", "gmail", "youtube", "twitter", "facebook"]
+        web_actions = ["ask", "send message", "post", "tweet", "email"]
+        if any(site in goal_lower for site in web_tasks) and any(action in goal_lower for action in web_actions):
+            return True
+        
+        return False
 
     def _generate_response(self, goal: str, results: List[Dict[str, Any]]) -> str:
         """Generate a conversational response based on action results."""

@@ -18,7 +18,9 @@ def db_path() -> Path:
 
 
 def ollama_model() -> str:
-    return env_str("OLLAMA_MODEL", "llama3.1")
+    # Try to read from profile first, then env, then default
+    default = str(profile_get("models.main_model", "llama3"))
+    return env_str("OLLAMA_MODEL", default)
 
 
 def embed_model() -> str:

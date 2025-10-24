@@ -226,8 +226,13 @@ class PerceptionEngine:
                 return {"success": False, "error": "CV requires image template"}
         
         elif layer == PerceptionLayer.OCR:
-            # Use OCR to find and click text
-            return executor.click_text(target)
+            # Use OCR to find and click text; if not immediately found, briefly wait
+            res = executor.click_text(target)
+            if not res.get("success"):
+                wait = executor.wait_for_text(target, timeout=2)
+                if wait.get("found"):
+                    res = executor.click_text(target)
+            return res
         
         return {"success": False, "error": f"Unknown layer: {layer}"}
     
@@ -447,3 +452,93 @@ class PerceptionEngine:
                 "retry_count": self.config.retry_count
             }
         }
+    
+    def get_screen_elements(self) -> Dict[str, Any]:
+        """
+        Analyze the current screen and return list of visible UI elements.
+        Uses vision model to identify buttons, text fields, menus, etc.
+        
+        Returns:
+            {
+                "success": bool,
+                "elements": List[str],  # List of element descriptions
+                "raw_analysis": str      # Full analysis from vision model
+            }
+        """
+        import tempfile
+        import time
+        from pathlib import Path
+        
+        try:
+            # Take screenshot
+            screenshot_path = Path(tempfile.gettempdir()) / f"perception_screen_{int(time.time())}.png"
+            
+            # Use CV executor to capture screen
+            cv_executor = self.executors.get(PerceptionLayer.COMPUTER_VISION)
+            if not cv_executor:
+                return {
+                    "success": False,
+                    "error": "Computer Vision layer not available"
+                }
+            
+            result = cv_executor.save_screenshot(str(screenshot_path))
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "error": "Screenshot failed"
+                }
+            
+            # Analyze with vision model
+            try:
+                from .vision_exec import VisionExecutor
+                vision = VisionExecutor()
+                
+                analysis = vision.analyze_screenshot(
+                    str(screenshot_path),
+                    question="List all UI elements visible: buttons (with their text), text fields, menus, sliders, dropdowns, and other controls. Be specific about button labels."
+                )
+                
+                # Clean up screenshot
+                try:
+                    screenshot_path.unlink()
+                except:
+                    pass
+                
+                if not analysis.get("success"):
+                    return {
+                        "success": False,
+                        "error": f"Vision analysis failed: {analysis.get('error', 'unknown error')}"
+                    }
+                
+                # Parse the analysis to extract element list
+                raw_text = analysis.get("answer", "")
+                elements = []
+                
+                # Simple parsing: split by newlines and filter non-empty lines
+                for line in raw_text.split('\n'):
+                    line = line.strip()
+                    if line and len(line) > 3:  # Skip very short lines
+                        # Remove common list markers
+                        line = line.lstrip('-*•0123456789. ')
+                        if line:
+                            elements.append(line)
+                
+                return {
+                    "success": True,
+                    "elements": elements,
+                    "raw_analysis": raw_text,
+                    "screenshot_path": str(screenshot_path)
+                }
+                
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Vision executor error: {str(e)}"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Screen elements detection failed: {str(e)}"
+            }
+

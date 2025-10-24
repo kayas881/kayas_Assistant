@@ -59,7 +59,20 @@ class UIAutomationExecutor:
             raise ImportError(f"UI Automation not available: {error_msg}")
         
         self.config = config or UIAutomationConfig()
-        self.desktop = Desktop(backend=self.config.backend)
+        # Try to initialize Desktop with requested backend; on COM threading error, fall back to 'win32'
+        try:
+            self.desktop = Desktop(backend=self.config.backend)
+        except Exception as e:
+            msg = str(e)
+            if "Cannot change thread mode" in msg or "CoInitialize" in msg or "COINIT" in msg:
+                try:
+                    self.config.backend = "win32"
+                    self.desktop = Desktop(backend=self.config.backend)
+                    print("[UIA] Falling back to 'win32' backend due to COM threading conflict")
+                except Exception:
+                    raise
+            else:
+                raise
         self.apps = {}  # Cache connected applications
     
     def find_window(self, 
@@ -449,4 +462,151 @@ class UIAutomationExecutor:
             return {
                 "success": False,
                 "error": f"Error getting control tree: {str(e)}"
+            }
+    
+    def set_slider_value(self,
+                        window_title: str,
+                        target: str,
+                        value: int,
+                        control_id: str = None) -> Dict[str, Any]:
+        """
+        Set a slider control to a specific value.
+        
+        Args:
+            window_title: Title of window containing slider
+            target: Text near slider or automation ID
+            value: Value to set (usually 0-100 for percentage)
+            control_id: Optional automation ID of slider
+            
+        Returns:
+            {"success": bool, "value": int, "message": str}
+        """
+        try:
+            window_result = self.find_window(title=window_title)
+            if not window_result["success"]:
+                return window_result
+            
+            window = window_result["window"]
+            
+            # Try to find slider by text or automation ID
+            if control_id:
+                slider = window.child_window(auto_id=control_id, control_type="Slider")
+            else:
+                # Try to find by nearby text
+                slider = window.child_window(best_match=target, control_type="Slider")
+            
+            # Set the slider value
+            slider.set_value(value)
+            
+            return {
+                "success": True,
+                "value": value,
+                "message": f"Set slider to {value}"
+            }
+            
+        except (ElementNotFoundError, ElementAmbiguousError) as e:
+            return {
+                "success": False,
+                "error": f"Slider not found: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error setting slider: {str(e)}"
+            }
+    
+    def select_dropdown(self,
+                       window_title: str,
+                       dropdown_id: str,
+                       item_text: str) -> Dict[str, Any]:
+        """
+        Select an item from a dropdown/combobox.
+        
+        Args:
+            window_title: Title of window containing dropdown
+            dropdown_id: Text or automation ID of dropdown
+            item_text: Text of item to select
+            
+        Returns:
+            {"success": bool, "selected": str, "message": str}
+        """
+        try:
+            window_result = self.find_window(title=window_title)
+            if not window_result["success"]:
+                return window_result
+            
+            window = window_result["window"]
+            
+            # Find combobox/dropdown
+            try:
+                combo = window.child_window(best_match=dropdown_id, control_type="ComboBox")
+            except:
+                combo = window.child_window(best_match=dropdown_id, control_type="List")
+            
+            # Select item
+            combo.select(item_text)
+            
+            return {
+                "success": True,
+                "selected": item_text,
+                "message": f"Selected '{item_text}' from dropdown"
+            }
+            
+        except (ElementNotFoundError, ElementAmbiguousError) as e:
+            return {
+                "success": False,
+                "error": f"Dropdown not found: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error selecting dropdown item: {str(e)}"
+            }
+    
+    def check_checkbox(self,
+                      window_title: str,
+                      checkbox_text: str,
+                      checked: bool = True) -> Dict[str, Any]:
+        """
+        Check or uncheck a checkbox.
+        
+        Args:
+            window_title: Title of window containing checkbox
+            checkbox_text: Text of checkbox
+            checked: True to check, False to uncheck
+            
+        Returns:
+            {"success": bool, "checked": bool, "message": str}
+        """
+        try:
+            window_result = self.find_window(title=window_title)
+            if not window_result["success"]:
+                return window_result
+            
+            window = window_result["window"]
+            
+            # Find checkbox
+            checkbox = window.child_window(best_match=checkbox_text, control_type="CheckBox")
+            
+            # Set state
+            if checked:
+                checkbox.check()
+            else:
+                checkbox.uncheck()
+            
+            return {
+                "success": True,
+                "checked": checked,
+                "message": f"{'Checked' if checked else 'Unchecked'} '{checkbox_text}'"
+            }
+            
+        except (ElementNotFoundError, ElementAmbiguousError) as e:
+            return {
+                "success": False,
+                "error": f"Checkbox not found: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error setting checkbox: {str(e)}"
             }
