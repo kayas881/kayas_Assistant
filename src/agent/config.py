@@ -37,6 +37,49 @@ def strong_model() -> str:
     return env_str("STRONG_MODEL", "")
 
 
+# HF backend configuration (optional)
+def llm_backend() -> str:
+    """Select LLM backend: 'ollama' (default) | 'hf' | 'http'."""
+    val = profile_get("models.backend", None)
+    if val:
+        return str(val).lower()
+    return env_str("AGENT_LLM_BACKEND", "ollama").lower()
+
+
+# Remote HTTP LLM backend config
+def remote_base_url() -> str:
+    prof = profile_get("models.remote.base_url", "")
+    if prof:
+        return str(prof)
+    return env_str("REMOTE_LLM_BASE_URL", "")
+
+
+def remote_api_key() -> str:
+    prof = profile_get("models.remote.api_key", "")
+    if prof:
+        return str(prof)
+    return env_str("REMOTE_LLM_API_KEY", "")
+
+
+def hf_base_model() -> str:
+    return env_str("HF_BASE_MODEL", str(profile_get("models.hf.base_model", "Qwen/Qwen2.5-3B-Instruct")))
+
+
+def hf_merged_model_dir() -> str:
+    return env_str("HF_MERGED_MODEL_DIR", str(profile_get("models.hf.merged_model_dir", "")))
+
+
+def hf_adapter_dir() -> str:
+    return env_str("HF_ADAPTER_DIR", str(profile_get("models.hf.adapter_dir", "")))
+
+
+def hf_use_4bit() -> bool:
+    val = profile_get("models.hf.use_4bit", None)
+    if val is not None:
+        return bool(val)
+    return env_str("HF_USE_4BIT", "1").lower() in ("1", "true", "yes")
+
+
 def chroma_dir() -> Path:
     return Path(env_str("CHROMA_DIR", ".agent/chroma")).resolve()
 

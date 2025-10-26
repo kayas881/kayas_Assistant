@@ -59,9 +59,15 @@ class Planner:
 
 
 STRUCTURED_SYSTEM = (
-    "You are a planner that emits ONLY JSON representing tool calls. "
-    "Schema: either a single object {\"tool\": string, \"args\": object} or a list of such objects. "
-    "Available tools: \n"
+    "You are a JSON-only planner. Respond with VALID JSON ONLY. No explanations, no markdown, no extra text.\n\n"
+    "Output format: either a single object {\"tool\": \"name\", \"args\": {...}} or an array of such objects.\n\n"
+    "Example valid response:\n"
+    "[{\"tool\": \"web.fetch\", \"args\": {\"url\": \"https://google.com/search?q=freelancing+trends\"}}, "
+    "{\"tool\": \"filesystem.create_file\", \"args\": {\"filename\": \"notes.txt\", \"content\": \"Summary here\"}}]\n\n"
+    "Example for opening program and typing:\n"
+    "[{\"tool\": \"process.start_program\", \"args\": {\"program\": \"notepad.exe\", \"background\": true}}, "
+    "{\"tool\": \"uia.type_text\", \"args\": {\"window_title\": \"Notepad\", \"text\": \"hello world\"}}]\n\n"
+    "Available tools:\n"
     "- filesystem.create_file {filename, content?}\n"
     "- filesystem.append_file {filename, content}\n"
     "- web.fetch {url}\n"
@@ -164,10 +170,33 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             raw = json.dumps(heuristic)
             return heuristic, raw, prompt
 
-        # Heuristic: if the user asks to search or mentions Google/Bing etc., issue a web.fetch to a search URL
+        # Heuristic: open/start a program (browser, app, etc.)
+        # Only use this heuristic if it's a SIMPLE open command without complex follow-up actions
         g = goal.lower()
-        if ("search" in g) or ("google" in g) or ("bing" in g) or ("duckduckgo" in g) or ("brave" in g):
-            # Build a simple Google search URL; include full goal as query for robustness
+        simple_open = ("open" in g or "start" in g or "launch" in g) and any(app in g for app in ["chrome", "firefox", "edge", "browser", "notepad", "vscode", "spotify", "slack"])
+        has_followup = any(word in g for word in ["write", "type", "click", "select", "fill", "enter", "submit"])
+        
+        if simple_open and not has_followup:
+            # Extract program name
+            program = "chrome.exe" if "chrome" in g else "firefox.exe" if "firefox" in g else "msedge.exe" if "edge" in g else "notepad.exe" if "notepad" in g else "code.exe" if "vscode" in g else "spotify.exe" if "spotify" in g else "slack.exe" if "slack" in g else "chrome.exe"
+            
+            # If also mentions search/google, open browser with search URL directly (no automation to avoid CAPTCHA)
+            if "search" in g or "google" in g:
+                search_query = re.sub(r'\b(open|start|launch|chrome|firefox|edge|browser|and|then|for|search|google)\b', '', g, flags=re.IGNORECASE).strip()
+                if search_query:
+                    search_url = f"https://www.google.com/search?q={quote_plus(search_query)}"
+                    heuristic = [{"tool": "process.start_program", "args": {"program": program, "args": [search_url], "background": True}}]
+                else:
+                    heuristic = [{"tool": "process.start_program", "args": {"program": program, "background": True}}]
+            else:
+                heuristic = [{"tool": "process.start_program", "args": {"program": program, "background": True}}]
+            
+            raw = json.dumps(heuristic)
+            return heuristic, raw, prompt
+
+        # Heuristic: web search (only if NOT opening a browser)
+        if ("search" in g or "trends" in g or "latest" in g) and not any(word in g for word in ["open", "chrome", "firefox", "browser"]):
+            # Build a search URL
             url = preferred_search_base() + quote_plus(goal)
             heuristic = [{"tool": "web.fetch", "args": {"url": url}}]
             raw = json.dumps(heuristic)

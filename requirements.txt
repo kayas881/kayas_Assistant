@@ -13,6 +13,12 @@ simpleaudio==1.0.4
 pyttsx3==2.90
 PyYAML==6.0.2
 
+# LLM backends (optional HF runtime)
+transformers==4.43.3
+peft==0.12.0
+accelerate==0.32.1
+safetensors==0.4.3
+
 # API integrations
 google-api-python-client==2.118.0
 google-auth-httplib2==0.2.0

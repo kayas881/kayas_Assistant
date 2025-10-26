@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+import re
 
 
 @dataclass
@@ -10,14 +11,58 @@ class Action:
     args: Dict[str, Any]
 
 
+def _extract_json_block(text: str) -> str:
+    """Extract a JSON array or object from a possibly noisy LLM response.
+
+    Handles prefixes like 'assistant', special markers, and finds the first JSON block.
+    """
+    s = text.strip()
+    # Strip common prefixes
+    if s.startswith("assistant"):
+        s = s[len("assistant"):].strip()
+    s = re.sub(r"<\|im_start\|>\w+", "", s)
+    s = re.sub(r"<\|im_end\|>", "", s)
+
+    # Locate first JSON start
+    start = s.find("[")
+    if start == -1:
+        start = s.find("{")
+    if start == -1:
+        return s
+
+    # Match brackets
+    open_ch = s[start]
+    close_ch = "]" if open_ch == "[" else "}"
+    depth = 0
+    end = -1
+    for i, ch in enumerate(s[start:], start=start):
+        if ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end == -1:
+        end = len(s)
+    return s[start:end].strip()
+
+
 def parse_actions(text: str) -> List[Action]:
     import json
 
     # Accept either a single JSON object or a JSON list
+    data = None
     try:
         data = json.loads(text)
     except Exception:
-        return []
+        # Try to extract a JSON block from noisy output
+        try:
+            cleaned = _extract_json_block(text)
+            data = json.loads(cleaned)
+        except Exception:
+            return []
+
     if isinstance(data, dict):
         data = [data]
     out: List[Action] = []

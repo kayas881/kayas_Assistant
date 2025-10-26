@@ -1,0 +1,15 @@
+# AI Brain Training - Dependencies
+
+# Core ML libraries
+torch>=2.1.0
+transformers>=4.36.0
+datasets>=2.16.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0  # For 4-bit quantization
+peft>=0.7.0  # For LoRA
+trl>=0.7.0  # Trainer for instruction fine-tuning
+
+# Optional but recommended
+sentencepiece>=0.1.99  # For some tokenizers
+protobuf>=3.20.0
+einops>=0.7.0

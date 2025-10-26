@@ -314,6 +314,11 @@ See [API_INTEGRATIONS.md](API_INTEGRATIONS.md) for detailed setup and usage.
 
 ## Configuration
 - `OLLAMA_MODEL` (default: `llama3.1`)
+- `AGENT_LLM_BACKEND` (default: `ollama`; set to `hf` to use a Hugging Face model)
+- HF backend (when `AGENT_LLM_BACKEND=hf`):
+  - `HF_MERGED_MODEL_DIR` (preferred) path to a merged model directory
+  - or `HF_BASE_MODEL` + `HF_ADAPTER_DIR` (LoRA adapter path)
+  - `HF_USE_4BIT` (default: `1`) enable 4-bit loading when supported
 - `AGENT_ARTIFACTS_DIR` (default: `artifacts`)
 - `AGENT_DB_PATH` (default: `.agent/agent.db`)
 - `CHROMA_DIR` (default: `.agent/chroma`)
@@ -330,3 +335,21 @@ See [API_INTEGRATIONS.md](API_INTEGRATIONS.md) for detailed setup and usage.
 ## Notes
 - Playwright not required; a lightweight web fetch/scrape path is included. You can add Playwright later for JS-heavy pages.
 - Vector memory stores prior tasks/results and is consulted before planning to enable reuse.
+
+## Use your fine-tuned model in the Agent (HF backend)
+
+You can run Kayas with your fine-tuned QLoRA model (either merged or with an adapter):
+
+```powershell
+# Use a merged model directory
+$env:AGENT_LLM_BACKEND = "hf"
+$env:HF_MERGED_MODEL_DIR = "C:\\path\\to\\kayas-assistant-3b-merged"
+$env:HF_USE_4BIT = "1"  # optional
+
+# Or with base + adapter
+$env:AGENT_LLM_BACKEND = "hf"
+$env:HF_BASE_MODEL = "Qwen/Qwen2.5-3B-Instruct"
+$env:HF_ADAPTER_DIR = "C:\\path\\to\\checkpoint-297"
+```
+
+Then run the agent normally (GUI/CLI/API). The planner is already configured to emit JSON tool calls, and the parser was hardened to accept slightly noisy outputs.

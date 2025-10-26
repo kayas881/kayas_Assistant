@@ -7,8 +7,10 @@ from typing import Dict, List
 
 from rich import print
 
-from .config import artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, search_root, smtp_config, strong_model, planning_mode, react_max_steps, react_beam_width, google_calendar_config, slack_config, spotify_config, desktop_enabled
+from .config import artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, search_root, smtp_config, strong_model, planning_mode, react_max_steps, react_beam_width, google_calendar_config, slack_config, spotify_config, desktop_enabled, llm_backend, hf_base_model, hf_adapter_dir, hf_merged_model_dir, hf_use_4bit, remote_base_url, remote_api_key
 from .llm import LLM
+from .hf_llm import HFLLM
+from .http_llm import HTTPLLM
 from .planner import Planner, plan_structured, estimate_confidence
 from .actions import Router, Action, parse_actions
 from .safety import SafetyPolicy
@@ -18,6 +20,8 @@ from ..executors.email_exec import EmailConfig, EmailExecutor
 from ..executors.web_exec import WebConfig, WebExecutor
 from ..executors.browser_exec import BrowserExecutor, BrowserConfig
 from ..executors.desktop_exec import DesktopExecutor, DesktopConfig
+from ..executors.process_exec import ProcessExecutor, ProcessConfig
+from ..executors.uiautomation_exec import UIAutomationExecutor, UIAutomationConfig
 from ..executors.calendar_exec import GoogleCalendarExecutor, CalendarConfig
 from ..executors.slack_exec import SlackExecutor, SlackConfig  
 from ..executors.spotify_exec import SpotifyExecutor, SpotifyConfig
@@ -32,7 +36,20 @@ def run_agent(goal: str) -> Dict[str, str]:
     memory = SQLiteMemory(MemoryConfig(db_path=db_path()))
     memory.log_message(run_id, "user", goal)
 
-    llm = LLM(model=ollama_model())
+    # Select backend
+    backend = llm_backend()
+    if backend == "hf":
+        merged = hf_merged_model_dir()
+        base_or_merged = merged if merged else hf_base_model()
+        adapter = "" if merged else hf_adapter_dir()
+        llm = HFLLM(base_or_merged, adapter_dir=adapter or None, use_4bit=hf_use_4bit())
+    elif backend == "http":
+        base_url = remote_base_url()
+        if not base_url:
+            raise RuntimeError("models.backend is 'http' but no models.remote.base_url configured in profile or REMOTE_LLM_BASE_URL env")
+        llm = HTTPLLM(base_url=base_url, api_key=remote_api_key())
+    else:
+        llm = LLM(model=ollama_model())
     planner = Planner(llm)
     steps: List[str] = []
 
@@ -41,7 +58,14 @@ def run_agent(goal: str) -> Dict[str, str]:
     email_exec = EmailExecutor(EmailConfig(**smtp_config()))
     web_exec = WebExecutor(WebConfig())
     browser_exec = BrowserExecutor(BrowserConfig())
+    process_exec = ProcessExecutor(ProcessConfig())
     desktop_exec = DesktopExecutor(DesktopConfig()) if desktop_enabled() else None
+    
+    # UI Automation - only create if on Windows
+    try:
+        uia_exec = UIAutomationExecutor(UIAutomationConfig())
+    except ImportError:
+        uia_exec = None
     
     # API integrations - only create if credentials are available
     try:
@@ -89,6 +113,7 @@ def run_agent(goal: str) -> Dict[str, str]:
             "web": web_exec,
             "email": email_exec,
             "search": local_search,
+            "process": process_exec,
         }
         if calendar_exec:
             router_executors["calendar"] = calendar_exec
@@ -99,6 +124,8 @@ def run_agent(goal: str) -> Dict[str, str]:
             
         if desktop_exec:
             router_executors["desktop"] = desktop_exec
+        if uia_exec:
+            router_executors["uia"] = uia_exec
         router = Router(router_executors, safety=SafetyPolicy())
         ra = ReactAgent(llm, router)
         rr = ra.run(goal, max_steps=react_max_steps(), beam_width=react_beam_width())
@@ -149,6 +176,7 @@ def run_agent(goal: str) -> Dict[str, str]:
         "browser": browser_exec,
         "email": email_exec,
         "search": local_search,
+        "process": process_exec,
     }
     if calendar_exec:
         router_executors["calendar"] = calendar_exec
@@ -158,6 +186,8 @@ def run_agent(goal: str) -> Dict[str, str]:
         router_executors["spotify"] = spotify_exec
     if desktop_exec:
         router_executors["desktop"] = desktop_exec
+    if uia_exec:
+        router_executors["uia"] = uia_exec
         
     router = Router(router_executors, safety=SafetyPolicy())
 

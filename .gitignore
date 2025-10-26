@@ -218,3 +218,65 @@ model_training/training_data_auto/*.json
 model_training/training_data_auto/*.png
 model_training/training_data_auto/dataset.json
 model_training/training_data_auto/bboxes.json
+
+# ------------------------------
+# Additional project-specific ignores
+# ------------------------------
+
+# ML/LLM caches and model artifacts
+.cache/
+cache/
+hf_cache/
+huggingface/
+.huggingface/
+datasets/
+data/
+wandb/
+lightning_logs/
+runs/
+checkpoints/
+outputs/
+models/
+saved_models/
+adapters/
+*.safetensors
+*.bin
+*.pt
+
+# Databases and state
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Playwright/UI automation reports
+playwright-report/
+test-results/
+.playwright/
+screenshots/
+recordings/
+
+# Coverage and CI reports
+coverage.xml
+junit.xml
+report.xml
+
+# Python tool caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.pytype/
+.pyre/
+.pylint.d/
+
+# Version/Env hints
+.python-version
+.envrc
+
+# Certificates/keys (ensure no secrets are committed)
+*.pem
+*.key
+*.crt
+*.p12
+
