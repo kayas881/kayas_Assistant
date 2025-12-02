@@ -8,7 +8,8 @@ A comprehensive AI assistant that combines voice interaction, desktop automation
 - 🌐 **Web Browsing**: Interactive browser automation with session persistence
 - 📅 **Integrations**: Google Calendar, Slack, Spotify control
 - 🧠 **Smart Memory**: Persistent conversations with context awareness
-- 🎯 **Local LLM**: Powered by Ollama (privacy-focused, runs offline)
+- 🎯 **Trained 7B Model**: Fine-tuned Mistral-7B for intelligent task routing
+- 🤖 **Local LLM**: Powered by Ollama or HuggingFace (privacy-focused, runs offline)
 
 ## 🚀 Quick Start
 
@@ -47,6 +48,10 @@ python kayas.py --continuous
 # Text-only Mode
 python kayas.py --no-voice
 ```
+
+## 📚 Documentation
+- Detailed guides moved to `docs/`
+- See `docs/INDEX.md` for the full list
 
 ## 💬 Usage Examples
 
@@ -353,3 +358,39 @@ $env:HF_ADAPTER_DIR = "C:\\path\\to\\checkpoint-297"
 ```
 
 Then run the agent normally (GUI/CLI/API). The planner is already configured to emit JSON tool calls, and the parser was hardened to accept slightly noisy outputs.
+
+## 🎓 Using Your Trained 7B Model
+
+Your fine-tuned **Mistral-7B** model is ready to use! It's configured by default in `.agent/profile.yaml`.
+
+### Quick Test
+```powershell
+# Quick interactive test
+python quick_test_7b.py
+
+# Full test suite with automated + interactive modes
+python test_7b_model.py
+
+# Use in the full agent
+python -m src.agent.main "Create a summary about AI trends"
+```
+
+### Configuration
+The 7B model is configured in `.agent/profile.yaml`:
+```yaml
+models:
+  backend: hf
+  hf:
+    base_model: "mistralai/Mistral-7B-Instruct-v0.2"
+    adapter_dir: "brain_training/kayastune7b_t4/checkpoint-313"
+    use_4bit: true  # Enables 4-bit quantization for memory efficiency
+```
+
+### Model Details
+- **Base**: Mistral-7B-Instruct-v0.2
+- **Fine-tuned**: LoRA adapters trained on task-specific data
+- **Checkpoints**: 250, 300, 313 (latest active)
+- **Memory**: ~6GB GPU RAM with 4-bit quantization
+- **Capabilities**: Tool routing, JSON generation, multi-step planning
+
+📖 **Full Guide**: See [USE_7B_MODEL.md](USE_7B_MODEL.md) for detailed usage, troubleshooting, and advanced options.

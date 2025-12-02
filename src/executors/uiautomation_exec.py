@@ -28,6 +28,10 @@ if sys.platform == "win32":
 
 try:
     from pywinauto import Application, Desktop
+    try:
+        from pywinauto.keyboard import send_keys  # type: ignore
+    except Exception:
+        send_keys = None  # fallback later
     from pywinauto.findwindows import ElementNotFoundError, ElementAmbiguousError
     from pywinauto.timings import TimeoutError as PWTimeoutError
     PYWINAUTO_AVAILABLE = True
@@ -255,25 +259,63 @@ class UIAutomationExecutor:
         """
         try:
             # Find window
+            # Try to find target window by exact title first, then by best match
             window_result = self.find_window(title=window_title)
-            if not window_result["success"]:
+            if not window_result.get("success"):
+                # Fallback to best_match using the provided title token or generic 'Notepad'
+                fallback_title = window_title or "Notepad"
+                window_result = self.find_window(best_match=fallback_title)
+                if not window_result.get("success") and fallback_title != "Notepad":
+                    window_result = self.find_window(best_match="Notepad")
+            if not window_result.get("success"):
                 return window_result
-            
+
             window = window_result["window"]
-            
-            # Find control
-            if control_id:
-                control = window.child_window(auto_id=control_id)
+            # Bring to front
+            try:
+                window.set_focus()
+            except Exception:
+                pass
+
+            # Find an editable control
+            control = None
+            try:
+                if control_id:
+                    control = window.child_window(auto_id=control_id)
+                else:
+                    # Prefer control_type for UIA backend
+                    control = window.child_window(control_type=control_type)
+            except Exception:
+                control = None
+
+            # Type via control if available
+            if control is not None:
+                try:
+                    control.wait("enabled", timeout=self.config.timeout)
+                    control.type_keys(text, with_spaces=True)
+                    return {
+                        "success": True,
+                        "message": f"Typed text into {control_type} in '{window_title}'"
+                    }
+                except Exception as e:
+                    last_err = str(e)
             else:
-                control = window.child_window(class_name=control_type)
-            
-            # Type text
-            control.wait("enabled", timeout=self.config.timeout)
-            control.type_keys(text, with_spaces=True)
-            
+                last_err = "editable control not found"
+
+            # Fallback: send keys to active window
+            try:
+                if send_keys is not None:
+                    send_keys(text, with_spaces=True)
+                    return {
+                        "success": True,
+                        "message": f"Sent keys to window '{window_title}' via keyboard fallback"
+                    }
+            except Exception as e:
+                last_err = str(e)
+
             return {
-                "success": True,
-                "message": f"Typed text into {control_type} in '{window_title}'"
+                "success": False,
+                "error": f"Failed to type text: {last_err}"
             }
             
         except Exception as e:
@@ -296,18 +338,46 @@ class UIAutomationExecutor:
             {"success": bool, "text": str}
         """
         try:
-            # Find window
+            # Find window (exact, then best_match fallback)
             window_result = self.find_window(title=window_title)
-            if not window_result["success"]:
-                return window_result
-            
+            if not window_result.get("success"):
+                window_result = self.find_window(best_match=window_title or "Notepad")
+                if not window_result.get("success"):
+                    return window_result
+
             window = window_result["window"]
-            
-            if control_id:
-                control = window.child_window(auto_id=control_id)
-                text = control.window_text()
-            else:
-                text = window.window_text()
+            try:
+                window.set_focus()
+            except Exception:
+                pass
+
+            text = ""
+            try:
+                if control_id:
+                    control = window.child_window(auto_id=control_id)
+                    try:
+                        text = control.get_value()  # type: ignore[attr-defined]
+                    except Exception:
+                        try:
+                            text = control.wrapper_object().texts()[0]
+                        except Exception:
+                            text = control.window_text()
+                else:
+                    # Prefer reading from the main edit/document control
+                    try:
+                        edit = window.child_window(control_type="Edit")
+                        try:
+                            text = edit.get_value()  # type: ignore[attr-defined]
+                        except Exception:
+                            try:
+                                text = edit.wrapper_object().texts()[0]
+                            except Exception:
+                                text = edit.window_text()
+                    except Exception:
+                        # Fallback to the window's own text
+                        text = window.window_text()
+            except Exception as e:
+                return {"success": False, "error": f"Error reading text: {str(e)}"}
             
             return {
                 "success": True,

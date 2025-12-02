@@ -33,20 +33,30 @@ class HFLLM:
         use_4bit: bool = True,
         attn_eager: bool = True,
     ) -> None:
+        # Store config; defer actual model/tokenizer load until first generate to avoid blocking simple tool heuristics
         self.model_name = base_or_merged
         self.adapter_dir = adapter_dir or ""
         self.use_4bit = bool(use_4bit)
         self.attn_eager = bool(attn_eager)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name, 
-            use_fast=True, 
-            trust_remote_code=True,
-            local_files_only=False
-        )
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer: Optional[AutoTokenizer] = None
+        self.model: Optional[AutoModelForCausalLM] = None
+        self._loaded: bool = False
 
+    def _ensure_loaded(self) -> None:
+        if self._loaded:
+            return
+        # Load tokenizer
+        tok = AutoTokenizer.from_pretrained(
+            self.model_name,
+            use_fast=True,
+            trust_remote_code=True,
+            local_files_only=False,
+        )
+        if tok.pad_token_id is None:
+            tok.pad_token = tok.eos_token
+
+        # Configure quantization if available
         quant_config = None
         if self.use_4bit and _HAS_BNB:
             quant_config = BitsAndBytesConfig(
@@ -56,29 +66,35 @@ class HFLLM:
                 bnb_4bit_use_double_quant=True,
             )
 
-        self.model = AutoModelForCausalLM.from_pretrained(
+        # Load model
+        mdl = AutoModelForCausalLM.from_pretrained(
             self.model_name,
             quantization_config=quant_config,
             device_map="auto",
             torch_dtype=torch.float16 if torch.cuda.is_available() else None,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
-            local_files_only=False
+            local_files_only=False,
         )
         if self.attn_eager:
             try:
-                self.model.config.attn_implementation = "eager"
+                mdl.config.attn_implementation = "eager"
             except Exception:
                 pass
-        self.model.config.use_cache = False
+        mdl.config.use_cache = False
 
         # Attach adapter if provided (and not already merged)
         if self.adapter_dir:
             if not _HAS_PEFT:
                 raise RuntimeError("peft is required to load LoRA adapter but is not installed.")
-            self.model = PeftModel.from_pretrained(self.model, self.adapter_dir)
+            mdl = PeftModel.from_pretrained(mdl, self.adapter_dir)
 
-        self.model.eval()
+        mdl.eval()
+
+        # Commit
+        self.tokenizer = tok
+        self.model = mdl
+        self._loaded = True
 
     def _build_messages(self, prompt: str, system: Optional[str]) -> List[Dict[str, str]]:
         msgs: List[Dict[str, str]] = []
@@ -95,6 +111,9 @@ class HFLLM:
             raise TimeoutError("Model generation timed out after 60 seconds")
         
         try:
+            # Lazy load heavy assets on first generate
+            self._ensure_loaded()
+            assert self.tokenizer is not None and self.model is not None
             messages = self._build_messages(prompt, system)
             text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.tokenizer([text], return_tensors="pt")
@@ -117,11 +136,15 @@ class HFLLM:
             elapsed = time.time() - start_time
             if elapsed > 120:  # 2 minute warning
                 print(f"Warning: Generation took {elapsed:.1f}s")
-                
-            decoded = self.tokenizer.decode(out[0], skip_special_tokens=True)
-            # Extract the assistant response
-            if "<|im_start|>assistant" in decoded:
-                return decoded.split("<|im_start|>assistant")[-1].replace("<|im_end|>", "").strip()
+            
+            # Decode only the new tokens (skip the input prompt)
+            input_length = inputs['input_ids'].shape[1]
+            generated_ids = out[0][input_length:]
+            decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+            
+            # Additional cleanup for common chat template artifacts
+            decoded = decoded.replace("<|im_end|>", "").strip()
+            
             return decoded
         except Exception as e:
             error_msg = f"HF generation failed: {type(e).__name__}: {str(e)}"

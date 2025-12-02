@@ -11,9 +11,10 @@ from ..agent.config import (
     artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, 
     search_root, smtp_config, google_calendar_config, slack_config, 
     spotify_config, desktop_enabled, github_config, notion_config,
-    trello_config, jira_config, planning_mode
+    trello_config, jira_config, planning_mode, llm_backend
 )
 from ..agent.llm import LLM
+from ..agent.hf_llm import HFLLM
 from ..agent.planner import Planner
 from ..agent.actions import Router
 from ..executors.filesystem import FSConfig, FileSystemExecutor
@@ -50,8 +51,15 @@ class DirectAgent:
     """Agent that can execute tools directly without HTTP API calls."""
     
     def __init__(self):
-        # Initialize LLM and planner
-        self.llm = LLM(model=ollama_model())
+        # Initialize LLM based on configured backend
+        backend = llm_backend()
+        if backend == "hf":
+            print("[DirectAgent] Using HuggingFace backend")
+            self.llm = HFLLM()
+        else:
+            print(f"[DirectAgent] Using Ollama backend with model: {ollama_model()}")
+            self.llm = LLM(model=ollama_model())
+        
         self.planner = Planner(self.llm)
         
         # Detect planning mode
@@ -429,6 +437,21 @@ class DirectAgent:
                     "tool": "perception.smart_read",
                     "args": {"context": {}}
                 }]
+            elif any(word in goal_lower for word in ["select", "click on", "find"]) and \
+                 any(word in goal_lower for word in ["account", "button", "profile", "option", "menu"]):
+                # Commands that reference screen elements - capture and search for them
+                import re
+                # Try to extract what to find (text in quotes or after "select/click")
+                match = re.search(r"(?:select|click on|find) (?:the )?['\"]?([^'\"]+?)['\"]?(?: account| button| profile| option| menu)?", goal_lower)
+                if match:
+                    target_text = match.group(1).strip()
+                    heuristic_plan = [{
+                        "tool": "perception.smart_click",
+                        "args": {
+                            "target": target_text,
+                            "context": {"take_screenshot": True}
+                        }
+                    }]
             
             if heuristic_plan:
                 print(f"DEBUG: Using heuristic plan: {heuristic_plan}")

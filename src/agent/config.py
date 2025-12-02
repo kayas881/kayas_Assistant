@@ -194,8 +194,26 @@ def strong_model() -> str:
 
 # Planning modes
 def planning_mode() -> str:
-    # 'structured' | 'react'
+    # 'structured' | 'react' | 'multi_candidate'
     return env_str("PLANNING_MODE", str(profile_get("planning.mode", "structured"))).lower()
+
+
+def use_multi_candidate_planning() -> bool:
+    """Enable multi-candidate planning with verification and fallback."""
+    val = profile_get("planning.use_multi_candidate", None)
+    if val is not None:
+        return bool(val)
+    return env_str("USE_MULTI_CANDIDATE_PLANNING", "1").lower() in ("1", "true", "yes")
+
+
+def num_plan_candidates() -> int:
+    """Number of candidate plans to generate (default 3)."""
+    return int(os.getenv("NUM_PLAN_CANDIDATES", str(profile_get("planning.num_candidates", 3))))
+
+
+def max_action_retries() -> int:
+    """Max retries per action before failing (default 2)."""
+    return int(os.getenv("MAX_ACTION_RETRIES", str(profile_get("planning.max_retries", 2))))
 
 
 def react_max_steps() -> int:

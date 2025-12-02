@@ -8,6 +8,8 @@ import re
 from .llm import LLM
 from .config import preferred_search_base, default_notes_filename
 from .actions import parse_actions
+from .plan_candidate import PlanCandidate, compute_risk_score, estimate_time
+from ..training.preference_model import score_plan
 
 
 PLANNER_SYSTEM = (
@@ -162,6 +164,141 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
     fb = f"User preferences and corrections (guidance):\n{feedback_hints}\n" if feedback_hints else ""
     prompt = f"Goal: {goal}\n{hint}{fb}Emit JSON tool calls only, no extra text."
     try:
+        # Heuristic: read Notepad content for "what's on my screen"/define/read/summarize intents
+        g_screen = goal.lower()
+        if ("notepad" in g_screen) and (
+            "what is on my screen" in g_screen or
+            "what's on my screen" in g_screen or
+            "define" in g_screen or
+            "read" in g_screen or
+            "summarize" in g_screen
+        ):
+            heuristic = [
+                {"tool": "uia.read_text", "args": {"window_title": "Notepad"}}
+            ]
+            raw = json.dumps(heuristic)
+            print("[Planner] Using Notepad read heuristic -> uia.read_text Notepad")
+            return heuristic, raw, prompt
+
+        # Heuristic: open Notepad, type, and save as <filename>.txt
+        g = goal.lower()
+        if ("notepad" in g) and ("write" in g or "type" in g) and ("save" in g) and (".txt" in g):
+            # Extract the text to type (before 'save')
+            mtxt = re.search(r"(?:write|type)\s+(.+?)(?:\s+and\s+save|\s+then\s+save|\s+save|$)", goal, re.IGNORECASE)
+            text_to_type = None
+            if mtxt:
+                text_to_type = mtxt.group(1).strip().strip('"').strip("'")
+            # Extract filename after 'save ... as'
+            mfile = re.search(r"save(?:\s+it|\s+this)?(?:\s+as)?\s+([\w.\- ]+\.txt)\b", goal, re.IGNORECASE)
+            filename = (mfile.group(1).strip() if mfile else "notes.txt")
+            type_text = text_to_type or "hello"
+            heuristic = [
+                {"tool": "process.start_program", "args": {"program": "notepad.exe", "background": True}},
+                {"tool": "desktop.run_steps", "args": {"steps": [{"action": "sleep", "args": {"ms": 1200}}], "stop_on_error": True}},
+                {"tool": "uia.type_text", "args": {"window_title": "Untitled - Notepad", "text": type_text}},
+                {"tool": "desktop.run_steps", "args": {"steps": [
+                    {"action": "hotkey", "args": {"keys": ["ctrl", "s"]}},
+                    {"action": "sleep", "args": {"ms": 600}},
+                    {"action": "write", "args": {"text": filename}},
+                    {"action": "sleep", "args": {"ms": 300}},
+                    {"action": "hotkey", "args": {"keys": ["enter"]}}
+                ], "stop_on_error": True}}
+            ]
+            raw = json.dumps(heuristic)
+            print(f"[Planner] Using Notepad save heuristic -> filename: {filename}")
+            return heuristic, raw, prompt
+
+        # Heuristic: open Notepad and type some text
+        # Only use this for simple typing WITHOUT save/close instructions
+        has_save = "save" in g or "save as" in g or "close" in g
+        if ("notepad" in g) and ("write" in g or "type" in g) and not has_save:
+            # Extract the text to type after the word write/type
+            # Stop extraction at common follow-up words like "and save", "then save", etc.
+            mtxt = re.search(r"(?:write|type)\s+(.+?)(?:\s+and\s+|\s+then\s+|$)", goal, re.IGNORECASE)
+            text_to_type = None
+            if mtxt:
+                text_to_type = mtxt.group(1).strip().strip('"').strip("'")
+            # Build a two-step plan: start notepad, then type into it
+            # Notepad window commonly titled 'Untitled - Notepad' on fresh instance
+            type_text = text_to_type or "hello"
+            heuristic = [
+                {"tool": "process.start_program", "args": {"program": "notepad.exe", "background": True}},
+                {"tool": "desktop.run_steps", "args": {"steps": [{"action": "sleep", "args": {"ms": 1200}}], "stop_on_error": True}},
+                {"tool": "uia.type_text", "args": {"window_title": "Untitled - Notepad", "text": type_text}}
+            ]
+            raw = json.dumps(heuristic)
+            return heuristic, raw, prompt
+
+        # Heuristic: explicit file write with exact text to a path
+        # Detect phrases like: "Write to path artifacts/hf_test.txt the exact text: hello" or
+        # "Write to file 'artifacts/hf_test.txt' content: 'hello'"
+        # BUT skip if this looks like a Notepad UI automation task
+        g_lower = goal.lower()
+        is_notepad_ui_task = "notepad" in g_lower and ("open" in g_lower or "start" in g_lower or "launch" in g_lower)
+        if any(k in g_lower for k in ["write", "create"]) and (".txt" in g_lower or "/" in goal or "\\" in goal) and not is_notepad_ui_task:
+            # Try to extract filename
+            filename = None
+            mq = re.search(r"'([^']+)'|\"([^\"]+)\"", goal)
+            if mq:
+                cand = mq.group(1) or mq.group(2)
+                # prefer candidates that look like paths or have an extension
+                if any(ch in cand for ch in ["/", "\\"]) or re.search(r"\.[A-Za-z0-9]{1,6}$", cand):
+                    filename = cand
+            if not filename:
+                mpath = re.search(r"(?:path|file|filename|as)\s+([\w.\-]+\.[A-Za-z0-9]{1,6})\b", goal, re.IGNORECASE)
+                if mpath:
+                    filename = mpath.group(1).strip()
+            if not filename:
+                # fallback: simple word.ext pattern
+                mext = re.search(r"\b([\w.\-]+\.[A-Za-z0-9]{1,6})\b", goal)
+                if mext:
+                    filename = mext.group(1).strip()
+
+            # Extract exact content if specified
+            content = None
+            # Look for explicit markers like "content:", "text:", or quoted strings
+            mcontent = re.search(r"(?i)(exact\s+text|text|content)\s*:\s*(.*)$", goal)
+            if mcontent:
+                content_raw = mcontent.group(2)
+                # Stop at common boundary hints
+                for stopper in ["Do not", "Don't", "Only", "No other", "and then", "then "]:
+                    idx = content_raw.find(stopper)
+                    if idx != -1:
+                        content_raw = content_raw[:idx]
+                        break
+                content_raw = content_raw.strip().strip()
+                # Strip surrounding quotes if present
+                if (content_raw.startswith("'") and "'" in content_raw[1:]):
+                    content = content_raw.strip()
+                    content = content[1:content.rfind("'")]
+                elif (content_raw.startswith('"') and '"' in content_raw[1:]):
+                    content = content_raw.strip()
+                    content = content[1:content.rfind('"')]
+                else:
+                    # Keep trailing punctuation
+                    content = content_raw.strip().rstrip()
+            
+            # Also try to extract quoted content anywhere in the goal
+            # Patterns: write 'text' to file, create file with 'text', etc.
+            if not content:
+                # Try single quotes
+                mquote = re.search(r"'([^']+)'", goal)
+                if mquote:
+                    content = mquote.group(1)
+                else:
+                    # Try double quotes
+                    mquote2 = re.search(r'"([^"]+)"', goal)
+                    if mquote2:
+                        content = mquote2.group(1)
+
+            if filename and content is not None:
+                heuristic = [{"tool": "filesystem.create_file", "args": {"filename": filename, "content": content}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using file-write heuristic: {filename}")
+                return heuristic, raw, prompt
+            elif filename:
+                print(f"[Planner] Found filename '{filename}' but no explicit content; falling through to LLM")
+
         # Heuristic: if the goal contains a direct URL, fetch it
         url_match = re.search(r"https?://\S+", goal)
         if url_match:
@@ -185,9 +322,10 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
                 search_query = re.sub(r'\b(open|start|launch|chrome|firefox|edge|browser|and|then|for|search|google)\b', '', g, flags=re.IGNORECASE).strip()
                 if search_query:
                     search_url = f"https://www.google.com/search?q={quote_plus(search_query)}"
-                    heuristic = [{"tool": "process.start_program", "args": {"program": program, "args": [search_url], "background": True}}]
                 else:
-                    heuristic = [{"tool": "process.start_program", "args": {"program": program, "background": True}}]
+                    # No query provided; open Google homepage to allow the user to type
+                    search_url = "https://www.google.com/"
+                heuristic = [{"tool": "process.start_program", "args": {"program": program, "args": [search_url], "background": True}}]
             else:
                 heuristic = [{"tool": "process.start_program", "args": {"program": program, "background": True}}]
             
@@ -219,10 +357,14 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             raw = json.dumps(heuristic)
             return heuristic, raw, prompt
 
+        print(f"[Planner] No heuristic matched; invoking LLM for structured planning")
         raw = llm.generate(prompt, system=STRUCTURED_SYSTEM, temperature=0.1)
+        print(f"[Planner] LLM returned: {raw[:200]}...")
         actions = parse_actions(raw)
+        print(f"[Planner] Parsed {len(actions)} actions")
         return [a.__dict__ for a in actions], raw, prompt
-    except Exception:
+    except Exception as e:
+        print(f"[Planner] Structured planning failed: {type(e).__name__}: {e}")
         return [], "", prompt
 
 
@@ -237,3 +379,108 @@ def estimate_confidence(raw_structured: str) -> float:
         return 0.2
     except Exception:
         return 0.0
+
+
+def plan_candidates(llm: LLM, goal: str, k: int = 3, reuse_filename: str | None = None, feedback_hints: str = "") -> List[PlanCandidate]:
+    """
+    Generate k candidate plans for the goal, ranked by overall_score().
+    
+    Returns a list of PlanCandidate sorted by descending overall_score (best first).
+    """
+    candidates: List[PlanCandidate] = []
+    
+    # Strategy 1: Heuristic-based plan (fast, high confidence if applicable)
+    heuristic_actions, heuristic_raw, heuristic_prompt = plan_structured(llm, goal, reuse_filename, feedback_hints)
+    if heuristic_actions:
+        # Check if this was a heuristic (by checking for debug print marker or simple heuristic patterns)
+        is_heuristic = any(
+            action.get("tool", "").startswith(("process.start_program", "filesystem.create_file"))
+            for action in heuristic_actions
+        ) and len(heuristic_actions) <= 5
+        
+        risk = compute_risk_score(heuristic_actions)
+        time_est = estimate_time(heuristic_actions)
+        
+        # Try to score with preference model
+        try:
+            pref_score = score_plan(heuristic_prompt, heuristic_raw)
+            # Boost heuristic scores since they're precisely matched
+            if is_heuristic and pref_score < 0.7:
+                pref_score = max(0.7, pref_score)
+        except Exception:
+            pref_score = 0.75 if is_heuristic else 0.5
+        
+        candidates.append(PlanCandidate(
+            actions=heuristic_actions,
+            strategy_name="heuristic" if is_heuristic else "llm_primary",
+            risk_score=risk,
+            step_count=len(heuristic_actions),
+            estimated_time_sec=time_est,
+            confidence=pref_score,
+            raw_llm_output=heuristic_raw,
+            prompt_used=heuristic_prompt,
+        ))
+    
+    # Strategy 2: Alternative LLM plan with higher temperature (more creative/risky)
+    if k > 1:
+        alt_prompt = f"{goal}\n\nProvide an alternative approach using different tools or methods."
+        try:
+            alt_system = STRUCTURED_SYSTEM + "\nGenerate a different strategy than the most obvious one."
+            alt_raw = llm.generate(alt_prompt, system=alt_system, temperature=0.3)
+            alt_actions_obj = parse_actions(alt_raw)
+            alt_actions = [a.__dict__ for a in alt_actions_obj]
+            
+            if alt_actions and alt_actions != heuristic_actions:
+                risk_alt = compute_risk_score(alt_actions)
+                time_alt = estimate_time(alt_actions)
+                try:
+                    pref_alt = score_plan(alt_prompt, alt_raw)
+                except Exception:
+                    pref_alt = 0.4
+                
+                candidates.append(PlanCandidate(
+                    actions=alt_actions,
+                    strategy_name="llm_alternative",
+                    risk_score=risk_alt,
+                    step_count=len(alt_actions),
+                    estimated_time_sec=time_alt,
+                    confidence=pref_alt,
+                    raw_llm_output=alt_raw,
+                    prompt_used=alt_prompt,
+                ))
+        except Exception as e:
+            print(f"[Planner] Alternative plan generation failed: {e}")
+    
+    # Strategy 3: Conservative fallback (filesystem-only for safe execution)
+    # Only use as last resort - lower confidence so primary plans are tried first
+    if k > 2:
+        # Build a simple filesystem-based plan
+        try:
+            fallback_actions = [
+                {"tool": "web.fetch", "args": {"url": f"https://www.google.com/search?q={quote_plus(goal)}"}},
+                {"tool": "filesystem.create_file", "args": {"filename": reuse_filename or "notes.txt", "content": f"Goal: {goal}\n\nPlease check the fetched content."}}
+            ]
+            risk_fb = compute_risk_score(fallback_actions)
+            time_fb = estimate_time(fallback_actions)
+            
+            candidates.append(PlanCandidate(
+                actions=fallback_actions,
+                strategy_name="conservative_fallback",
+                risk_score=risk_fb,
+                step_count=len(fallback_actions),
+                estimated_time_sec=time_fb,
+                confidence=0.3,  # Low confidence - only use as fallback
+                raw_llm_output="",
+                prompt_used="",
+            ))
+        except Exception:
+            pass
+    
+    # Rank by overall_score (descending)
+    candidates.sort(key=lambda c: c.overall_score(), reverse=True)
+    
+    print(f"[Planner] Generated {len(candidates)} candidate plans:")
+    for i, cand in enumerate(candidates):
+        print(f"  {i+1}. {cand.strategy_name}: {cand.step_count} steps, risk={cand.risk_score:.2f}, conf={cand.confidence:.2f}, score={cand.overall_score():.2f}")
+    
+    return candidates[:k]

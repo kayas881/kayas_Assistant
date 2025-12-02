@@ -649,6 +649,177 @@ def generate_error_scenarios() -> List[tuple]:
     return scenarios
 
 
+# === NEW: Agent-style examples (intent→plan, tool traces, multi-step, failures, persona+planning) ===
+def generate_intent_plan_examples(n: int = 50) -> List[Dict[str, Any]]:
+    """Map natural utterances to intents and concrete multi-step plans."""
+    samples: List[Dict[str, Any]] = []
+    commands = [
+        ("bro close the chrome window that's hanging", "close_app", [
+            {"action": "focus_window", "args": {"name": "Chrome"}},
+            {"action": "send_keys", "args": {"keys": "Alt+F4"}},
+            {"action": "verify_window_closed", "args": {"name": "Chrome"}},
+            {"action": "fallback_click_close_button", "args": {}}
+        ]),
+        ("find my downloads and clean up old files", "cleanup_downloads", [
+            {"action": "fs.list", "args": {"path": "Downloads"}},
+            {"action": "fs.filter_by_age", "args": {"days": 30}},
+            {"action": "fs.delete", "args": {"files": ["*.zip", "*.tmp"]}},
+            {"action": "fs.verify_deleted", "args": {}}
+        ]),
+        ("search python async best practices and summarize", "research_and_summarize", [
+            {"action": "browser.goto", "args": {"url": "https://google.com"}},
+            {"action": "browser.search", "args": {"query": "python async best practices"}},
+            {"action": "browser.open_result", "args": {"index": 1}},
+            {"action": "browser.screenshot", "args": {"path": f"research/async_{get_date_str()}.png"}},
+            {"action": "extract.summary", "args": {"source": "page"}}
+        ]),
+    ]
+    for _ in range(n):
+        text, intent, plan = random.choice(commands)
+        samples.append({
+            "category": "intent_plan",
+            "scenario": "multi_step_plan",
+            "user": text,
+            "intent": intent,
+            "plan": plan
+        })
+    return samples
+
+
+def generate_tool_trace_examples(n: int = 50) -> List[Dict[str, Any]]:
+    """Action→observation→next_action logs with retries and final_success."""
+    traces: List[Dict[str, Any]] = []
+    for _ in range(n):
+        ocr_words = random.sample(["Close", "Exit", "Cancel", "OK", "Apply"], k=2)
+        match_score = round(random.random(), 2)
+        result = "found" if match_score > 0.6 else "not_found"
+        fallback = "press_alt_f4" if result == "not_found" else None
+        traces.append({
+            "category": "tool_trace",
+            "scenario": "ui_click_with_ocr",
+            "log": [
+                {
+                    "step": "click_image",
+                    "result": result,
+                    "observation": {"ocr": ocr_words, "image_match_score": match_score},
+                    "retry": result == "not_found",
+                    "fallback": fallback
+                },
+                {
+                    "step": "verify_window_closed",
+                    "result": "success",
+                    "observation": {"windows_open": ["VS Code"]}
+                }
+            ],
+            "final_success": True
+        })
+    return traces
+
+
+def generate_multistep_task_examples(n: int = 60) -> List[Dict[str, Any]]:
+    """Real tasks: google→open→screenshot→extract; clean downloads→verify; scroll→click."""
+    tasks: List[Dict[str, Any]] = []
+    patterns = [
+        {
+            "user": "search something on google → open a result → screenshot → extract info",
+            "steps": [
+                {"tool": "browser.run_steps", "args": {"steps": [{"action": "goto", "args": {"url": "https://google.com"}}, {"action": "fill", "args": {"selector": "input[name=q]", "value": "python error handling best practices"}}, {"action": "enter", "args": {}}]}},
+                {"tool": "browser.run_steps", "args": {"steps": [{"action": "click", "args": {"selector": "#search a"}}]}},
+                {"tool": "browser.run_steps", "args": {"steps": [{"action": "screenshot", "args": {"filename": f"research/google_{get_timestamp()}.png"}}]}},
+                {"tool": "ocr.read_screen", "args": {}}
+            ]
+        },
+        {
+            "user": "clean downloads folder → verify deleted files → confirm success",
+            "steps": [
+                {"tool": "filesystem.list", "args": {"path": "Downloads"}},
+                {"tool": "filesystem.delete_file", "args": {"pattern": "*.zip"}},
+                {"tool": "filesystem.list", "args": {"path": "Downloads"}},
+                {"tool": "process.run_command", "args": {"command": "echo Cleaned"}}
+            ]
+        },
+        {
+            "user": "find a window by text → scroll until element appears → click it",
+            "steps": [
+                {"tool": "uia.find_window", "args": {"title_contains": "Settings"}},
+                {"tool": "uia.get_control_tree", "args": {"window_title": "Settings"}},
+                {"tool": "ocr.find_text", "args": {"text": "Advanced"}},
+                {"tool": "ocr.click_text", "args": {"text": "Advanced"}}
+            ]
+        }
+    ]
+    for _ in range(n):
+        p = random.choice(patterns)
+        tasks.append({
+            "category": "multi_step_task",
+            "scenario": "real_world",
+            "response": "Working on it…",
+            "actions": p["steps"],
+            "user": p["user"]
+        })
+    return tasks
+
+
+def generate_failure_recovery_examples(n: int = 40) -> List[Dict[str, Any]]:
+    """Demonstrate missing elements and recovery attempts."""
+    examples: List[Dict[str, Any]] = []
+    cases = [
+        {
+            "step": "button missing",
+            "attempts": [
+                {"action": "ocr.find_text", "args": {"text": "Submit"}, "result": "not_found"},
+                {"action": "uia.scroll", "args": {"window_title": "Form"}, "result": "ok"},
+                {"action": "ocr.find_text", "args": {"text": "Submit"}, "result": "found"},
+                {"action": "ocr.click_text", "args": {"text": "Submit"}, "result": "success"}
+            ]
+        },
+        {
+            "step": "page didn’t load",
+            "attempts": [
+                {"action": "browser.run_steps", "args": {"steps": [{"action": "goto", "args": {"url": "https://example.com"}}]}},
+                {"action": "browser.run_steps", "args": {"steps": [{"action": "reload", "args": {}}]}},
+                {"action": "browser.run_steps", "args": {"steps": [{"action": "wait", "args": {"ms": 1500}}]}},
+                {"action": "browser.run_steps", "args": {"steps": [{"action": "goto", "args": {"url": "https://example.com/dashboard"}}]}}
+            ]
+        },
+        {
+            "step": "element moved",
+            "attempts": [
+                {"action": "ocr.find_text", "args": {"text": "Settings"}, "result": "not_found"},
+                {"action": "uia.get_control_tree", "args": {"window_title": "App"}, "result": "ok"},
+                {"action": "ocr.find_text", "args": {"text": "Preferences"}, "result": "found"},
+                {"action": "ocr.click_text", "args": {"text": "Preferences"}, "result": "success"}
+            ]
+        }
+    ]
+    for _ in range(n):
+        case = random.choice(cases)
+        examples.append({
+            "category": "failure_recovery",
+            "scenario": case["step"],
+            "trace": case["attempts"],
+            "final_success": True
+        })
+    return examples
+
+
+def generate_persona_planning_examples(n: int = 50) -> List[Dict[str, Any]]:
+    """Friendly response plus concrete actions in one example."""
+    examples: List[Dict[str, Any]] = []
+    for _ in range(n):
+        examples.append({
+            "category": "persona_planning",
+            "scenario": "downloads_cleanup",
+            "response": "sure bro, give me a sec — going through your downloads now",
+            "actions": [
+                {"tool": "fs.list", "args": {"path": "Downloads"}},
+                {"tool": "fs.filter_by_age", "args": {"days": 30}},
+                {"tool": "fs.delete", "args": {"files": ["1.png", "old.zip"]}}
+            ]
+        })
+    return examples
+
+
 # Aggregate all scenario generators
 def get_all_scenarios() -> List[tuple]:
     """Generate comprehensive scenario pool (200+)"""
@@ -677,6 +848,17 @@ def get_all_scenarios() -> List[tuple]:
             unique_scenarios.append((text, tools))
     
     return unique_scenarios
+
+
+def _merge_agent_examples() -> List[Dict[str, Any]]:
+    """Collect all new agent-style examples."""
+    merged: List[Dict[str, Any]] = []
+    merged.extend(generate_intent_plan_examples(80))
+    merged.extend(generate_tool_trace_examples(80))
+    merged.extend(generate_multistep_task_examples(100))
+    merged.extend(generate_failure_recovery_examples(60))
+    merged.extend(generate_persona_planning_examples(80))
+    return merged
 
 
 # === MULTI-TURN CONVERSATION TEMPLATES ===
@@ -1062,6 +1244,13 @@ def expand_dataset(base_examples: List[Dict], target_count: int = 1000) -> List[
     
     print(f"Starting with {len(expanded)} base examples...")
     
+    # Inject agent-style examples first to cover intent→plan, tool traces, multi-step tasks, failures, persona+planning
+    agent_examples = _merge_agent_examples()
+    for ex in agent_examples:
+        if len(expanded) >= target_count:
+            break
+        expanded.append(ex)
+
     # Get all dynamic scenarios (200+ unique)
     all_scenarios = get_all_scenarios()
     print(f"Generated {len(all_scenarios)} unique scenarios")

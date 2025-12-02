@@ -7,13 +7,15 @@ from typing import Dict, List
 
 from rich import print
 
-from .config import artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, search_root, smtp_config, strong_model, planning_mode, react_max_steps, react_beam_width, google_calendar_config, slack_config, spotify_config, desktop_enabled, llm_backend, hf_base_model, hf_adapter_dir, hf_merged_model_dir, hf_use_4bit, remote_base_url, remote_api_key
+from .config import artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, search_root, smtp_config, strong_model, planning_mode, react_max_steps, react_beam_width, google_calendar_config, slack_config, spotify_config, desktop_enabled, llm_backend, hf_base_model, hf_adapter_dir, hf_merged_model_dir, hf_use_4bit, remote_base_url, remote_api_key, use_multi_candidate_planning, num_plan_candidates, max_action_retries
 from .llm import LLM
 from .hf_llm import HFLLM
 from .http_llm import HTTPLLM
-from .planner import Planner, plan_structured, estimate_confidence
+from .planner import Planner, plan_structured, plan_candidates, estimate_confidence
 from .actions import Router, Action, parse_actions
 from .safety import SafetyPolicy
+from .execution_manager import ExecutionManager
+from .plan_candidate import PlanCandidate
 from ..executors.filesystem import FSConfig, FileSystemExecutor
 from ..executors.local_search import LocalSearchConfig, LocalSearchExecutor
 from ..executors.email_exec import EmailConfig, EmailExecutor
@@ -105,6 +107,8 @@ def run_agent(goal: str) -> Dict[str, str]:
 
     last_path: str = ""
     last_web_result: Dict[str, str] | None = None
+    last_ui_text: str | None = None
+    did_ui_read: bool = False
     # Planning entry point: structured or ReAct
     if planning_mode() == "react":
         # Build router with available executors
@@ -191,6 +195,77 @@ def run_agent(goal: str) -> Dict[str, str]:
         
     router = Router(router_executors, safety=SafetyPolicy())
 
+    # ========== MULTI-CANDIDATE PLANNING WITH VERIFICATION ==========
+    # If enabled, generate k candidate plans, rank them, and execute with fallback
+    if use_multi_candidate_planning() and planning_mode() == "structured":
+        print(f"[Agent] Using multi-candidate planning (k={num_plan_candidates()})")
+        memory.log_message(run_id, "system", f"Multi-candidate planning enabled (k={num_plan_candidates()})")
+        
+        try:
+            candidates = plan_candidates(
+                planner.llm,
+                goal,
+                k=num_plan_candidates(),
+                reuse_filename=default_filename if reuse_artifact else None,
+                feedback_hints=feedback_hints
+            )
+            
+            if candidates:
+                # Log all candidates
+                for i, cand in enumerate(candidates):
+                    memory.log_message(
+                        run_id,
+                        "system",
+                        f"Candidate {i+1}: {cand.strategy_name} - "
+                        f"steps={cand.step_count}, risk={cand.risk_score:.2f}, "
+                        f"conf={cand.confidence:.2f}, score={cand.overall_score():.2f}"
+                    )
+                
+                # Execute with fallback
+                exec_manager = ExecutionManager(router, max_retries=max_action_retries())
+                plan_result = exec_manager.execute_with_fallback(candidates)
+                
+                if plan_result.success:
+                    memory.log_message(
+                        run_id,
+                        "system",
+                        f"Plan succeeded: {plan_result.plan_strategy} "
+                        f"({len(plan_result.completed_actions)} actions)"
+                    )
+                    last_path = plan_result.artifact_path
+                    
+                    # Log each action for training
+                    for exec_result in plan_result.completed_actions:
+                        memory.log_action(
+                            run_id,
+                            name=exec_result.action.get("tool", "unknown"),
+                            params=exec_result.action.get("args", {}),
+                            result=exec_result.result
+                        )
+                else:
+                    memory.log_message(
+                        run_id,
+                        "system",
+                        f"All {len(candidates)} candidate plans failed"
+                    )
+                    if plan_result.failed_action:
+                        memory.log_message(
+                            run_id,
+                            "system",
+                            f"Last failure: {plan_result.failed_action.error}"
+                        )
+                
+                # Skip the old single-plan execution
+                memory.log_message(run_id, "assistant", f"Completed. Artifact: {last_path}")
+                doc = f"Goal: {goal}\nArtifact: {last_path}"
+                vmem.add([doc], metadatas=[{"run_id": run_id, "artifact": last_path}], ids=[run_id])
+                return {"run_id": run_id, "artifact": last_path}
+        except Exception as e:
+            print(f"[Agent] Multi-candidate planning failed: {e}")
+            memory.log_message(run_id, "system", f"Multi-candidate planning error: {e}, falling back to single plan")
+            # Fall through to original single-plan execution
+
+    # ========== ORIGINAL SINGLE-PLAN EXECUTION ==========
     # If we have a structured plan and a strong model is available, optionally compare if score is low
     if structured_calls_json:
         sm = strong_model()
@@ -259,6 +334,12 @@ def run_agent(goal: str) -> Dict[str, str]:
             # capture web fetch results to materialize into a file later
             if action.tool == "web.fetch" and isinstance(result, dict):
                 last_web_result = result
+            # capture UI text reads for later summarization/materialization
+            if action.tool == "uia.read_text" and isinstance(result, dict):
+                did_ui_read = True
+                t = result.get("text")
+                if isinstance(t, str) and t.strip():
+                    last_ui_text = t
             if isinstance(result, dict) and result.get("path"):
                 last_path = result["path"]
             memory.log_action(run_id, name=action.tool, params=action.args, result=result)
@@ -297,6 +378,27 @@ def run_agent(goal: str) -> Dict[str, str]:
             # Always overwrite with fresh summary to avoid stale boilerplate
             target_path = (artifacts_dir() / target_name)
             create_res = fs.create_file(target_name, content if content else f"Notes for goal: {goal}")
+            memory.log_action(run_id, name="filesystem.create_file", params={"filename": target_name}, result=create_res)
+            last_path = create_res.get("path", str(target_path))
+        # If we captured UI text (e.g., Notepad content) but no artifact exists, summarize and save it
+        if not last_path and (last_ui_text or did_ui_read):
+            try:
+                summary_prompt = (
+                    "You are given raw text captured from a Notepad window on the user's screen.\n"
+                    "Succinctly define what's on the screen in 3-6 bullets.\n"
+                    "If it's short, include the exact text first, then a brief interpretation.\n\n"
+                    f"TEXT:\n{(last_ui_text or '').strip()[:6000]}"
+                )
+                summary = llm.generate(summary_prompt, system="You are a precise desktop content summarizer.", temperature=0.2)
+            except Exception:
+                summary = last_ui_text or ""
+            target_name = Path(reuse_artifact).name if reuse_artifact else default_filename
+            target_path = (artifacts_dir() / target_name)
+            if last_ui_text and last_ui_text.strip():
+                body = f"Captured Notepad Content:\n\n{last_ui_text}\n\nSummary:\n{summary}" if summary and summary.strip() else last_ui_text
+            else:
+                body = summary if summary.strip() else "No readable Notepad content was detected."
+            create_res = fs.create_file(target_name, body)
             memory.log_action(run_id, name="filesystem.create_file", params={"filename": target_name}, result=create_res)
             last_path = create_res.get("path", str(target_path))
     else:

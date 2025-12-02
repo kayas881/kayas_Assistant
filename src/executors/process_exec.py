@@ -4,6 +4,8 @@ Process and system executor for running programs and managing processes.
 from __future__ import annotations
 
 import subprocess
+import os
+import sys
 import psutil
 import signal
 import time
@@ -68,18 +70,18 @@ class ProcessExecutor:
             cmd = [program]
             if args:
                 cmd.extend(args)
-            
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE if background else None,
                 stderr=subprocess.PIPE if background else None,
                 text=True
             )
-            
+
             pid_key = process_id or f"proc_{process.pid}"
             if background:
                 self.active_processes[pid_key] = process
-            
+
             return {
                 "action": "process.start_program",
                 "success": True,
@@ -87,6 +89,93 @@ class ProcessExecutor:
                 "process_id": pid_key,
                 "program": program,
                 "background": background
+            }
+        except FileNotFoundError as e:
+            # Windows-specific fallbacks: find browser in common locations or use os.startfile/`start`
+            if sys.platform.startswith("win"):
+                url = args[0] if args and isinstance(args[0], str) and (args[0].startswith("http://") or args[0].startswith("https://")) else None
+                # Try opening URL with default handler
+                if url:
+                    try:
+                        os.startfile(url)  # type: ignore[attr-defined]
+                        return {
+                            "action": "process.start_program",
+                            "success": True,
+                            "program": "default_browser",
+                            "background": True,
+                            "method": "os.startfile",
+                            "url": url
+                        }
+                    except Exception:
+                        pass
+                # Try common install paths for popular browsers
+                candidates: List[str] = []
+                pf = os.environ.get("ProgramFiles", r"C:\\Program Files")
+                pf86 = os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)")
+                localapp = os.environ.get("LOCALAPPDATA", r"C:\\Users\\%USERNAME%\\AppData\\Local")
+                mapping = {
+                    "chrome.exe": [
+                        os.path.join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+                        os.path.join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+                        os.path.join(localapp, "Google", "Chrome", "Application", "chrome.exe"),
+                    ],
+                    "msedge.exe": [
+                        os.path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+                        os.path.join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
+                    ],
+                    "firefox.exe": [
+                        os.path.join(pf, "Mozilla Firefox", "firefox.exe"),
+                        os.path.join(pf86, "Mozilla Firefox", "firefox.exe"),
+                    ],
+                }
+                candidates.extend(mapping.get(program.lower(), []))
+                for path in candidates:
+                    if os.path.isfile(path):
+                        try:
+                            cmd2 = [path]
+                            if args:
+                                cmd2.extend(args)
+                            process = subprocess.Popen(
+                                cmd2,
+                                stdout=subprocess.PIPE if background else None,
+                                stderr=subprocess.PIPE if background else None,
+                                text=True
+                            )
+                            pid_key = process_id or f"proc_{process.pid}"
+                            if background:
+                                self.active_processes[pid_key] = process
+                            return {
+                                "action": "process.start_program",
+                                "success": True,
+                                "pid": process.pid,
+                                "process_id": pid_key,
+                                "program": path,
+                                "background": background,
+                                "resolved_from": program
+                            }
+                        except Exception:
+                            continue
+                # Final fallback: use cmd `start` to let Windows resolve
+                try:
+                    # Build a command string: start "" program [args...]
+                    quoted_args = " ".join([f'"{a}"' if " " in a else a for a in (args or [])])
+                    cmdline = f'start "" {program} {quoted_args}'.strip()
+                    subprocess.Popen(cmdline, shell=True)
+                    return {
+                        "action": "process.start_program",
+                        "success": True,
+                        "program": program,
+                        "background": True,
+                        "method": "cmd_start"
+                    }
+                except Exception:
+                    pass
+            # If all fallbacks fail, return the original error
+            return {
+                "action": "process.start_program",
+                "success": False,
+                "error": str(e),
+                "program": program
             }
         except Exception as e:
             return {

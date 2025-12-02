@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any, Dict
 import tempfile
 import os
+import uuid
 
 try:
     import speech_recognition as sr
@@ -198,6 +199,10 @@ class VoiceAgent:
     def _listen_with_whisper(self, timeout: float) -> Optional[str]:
         """Record audio and transcribe with Whisper."""
         try:
+            # Ensure temp directory exists
+            temp_dir = Path(tempfile.gettempdir())
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            
             print("Listening... (speak now)")
             
             # Record audio
@@ -249,15 +254,45 @@ class VoiceAgent:
             # Convert to numpy array
             audio_array = np.array(audio_data, dtype=np.float32)
             
-            # Save to temporary file for Whisper
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                wav.write(tmp_file.name, sample_rate, audio_array)
-                tmp_path = tmp_file.name
+            # Normalize audio to int16 for WAV file
+            audio_int16 = (audio_array * 32767).astype(np.int16)
             
+            # Save to temporary file for Whisper
+            tmp_path = None
             try:
-                # Transcribe with Whisper
-                print("Transcribing...")
-                result = self._whisper_model.transcribe(tmp_path)
+                # Create temp directory if it doesn't exist
+                temp_dir = Path(tempfile.gettempdir()) / "kayas_audio"
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Create temp file path
+                import uuid
+                tmp_filename = f"audio_{uuid.uuid4().hex[:8]}.wav"
+                tmp_path = str(temp_dir / tmp_filename)
+                
+                # Write WAV file directly
+                wav.write(tmp_path, sample_rate, audio_int16)
+                
+                # Verify file exists
+                if not Path(tmp_path).exists():
+                    print(f"Error: Audio file was not created at {tmp_path}")
+                    return None
+                
+                # Transcribe with Whisper (load audio directly to avoid ffmpeg dependency)
+                print(f"Transcribing audio...")
+                
+                # Load audio using scipy instead of letting Whisper use ffmpeg
+                try:
+                    sr_file, audio_data_int16 = wav.read(tmp_path)
+                    # Convert to float32 and normalize to [-1, 1]
+                    audio_for_whisper = audio_data_int16.astype(np.float32) / 32768.0
+                    
+                    # Transcribe with the numpy array directly - force English to prevent Hindi/other language detection
+                    result = self._whisper_model.transcribe(audio_for_whisper, fp16=False, language='english')
+                except Exception as load_error:
+                    print(f"Audio load error: {load_error}")
+                    # Fallback: try with file path
+                    result = self._whisper_model.transcribe(tmp_path, fp16=False, language='english')
+                
                 text = result.get("text", "").strip()
                 
                 if text:
@@ -267,12 +302,19 @@ class VoiceAgent:
                     print("No speech detected")
                     return None
                     
+            except Exception as transcribe_error:
+                print(f"Transcription error: {transcribe_error}")
+                if tmp_path:
+                    print(f"Audio file path: {tmp_path}")
+                    print(f"File exists: {Path(tmp_path).exists() if tmp_path else False}")
+                return None
             finally:
                 # Clean up temporary file
-                try:
-                    os.unlink(tmp_path)
-                except:
-                    pass
+                if tmp_path and Path(tmp_path).exists():
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception as e:
+                        print(f"Failed to delete temp file: {e}")
                     
         except Exception as e:
             print(f"Whisper STT error: {e}")

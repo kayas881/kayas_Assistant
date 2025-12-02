@@ -100,14 +100,54 @@ class ChatAgent:
                     self.voice_agent.speak(goodbye)
                 return
             
-            # Check for wake word
-            wake_detected = any(keyword in text_lower for keyword in self.cfg.voice_activation_keywords)
+            # Check for wake word with fuzzy matching to handle pronunciation variations
+            wake_detected = False
+            matched_keyword = None
+            
+            # First try exact substring match
+            for keyword in self.cfg.voice_activation_keywords:
+                if keyword in text_lower:
+                    wake_detected = True
+                    matched_keyword = keyword
+                    break
+            
+            # If no exact match, try fuzzy matching for similar sounds
+            if not wake_detected:
+                import difflib
+                # Split into words and check each
+                words = text_lower.split()
+                for word in words:
+                    for keyword in self.cfg.voice_activation_keywords:
+                        # Check similarity (handles Kaya, Kyaz, Chaos, etc.)
+                        similarity = difflib.SequenceMatcher(None, word, keyword.replace(" ", "")).ratio()
+                        if similarity > 0.6:  # 60% similar
+                            wake_detected = True
+                            matched_keyword = keyword
+                            break
+                    if wake_detected:
+                        break
             
             if wake_detected or self._wake_word_detected:
                 # Remove wake word from command
                 command = text
                 for keyword in self.cfg.voice_activation_keywords:
                     command = command.replace(keyword, "").strip()
+                
+                # Also remove the fuzzy matched word if found
+                if matched_keyword and not any(kw in text_lower for kw in self.cfg.voice_activation_keywords):
+                    # Remove the word that matched fuzzily
+                    words = command.split()
+                    filtered_words = []
+                    for word in words:
+                        is_wake = False
+                        for keyword in self.cfg.voice_activation_keywords:
+                            similarity = difflib.SequenceMatcher(None, word.lower(), keyword.replace(" ", "")).ratio()
+                            if similarity > 0.6:
+                                is_wake = True
+                                break
+                        if not is_wake:
+                            filtered_words.append(word)
+                    command = " ".join(filtered_words).strip()
                 
                 if command:  # If there's a command after the wake word
                     self._process_voice_command(command)

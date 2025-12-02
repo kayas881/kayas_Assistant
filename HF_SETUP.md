@@ -6,6 +6,8 @@ The Qwen/Qwen2.5-3B-Instruct base model requires HuggingFace authentication to d
 
 ## Solution: Choose One Approach
 
+Note: Full documentation has moved to `docs/`. See `docs/HF_SETUP.md`.
+
 ### Option A: Login to HuggingFace (Recommended)
 
 1. Get a HuggingFace token:

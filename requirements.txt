@@ -38,6 +38,9 @@ whisper==1.1.10
 sounddevice==0.4.6
 scipy==1.11.4
 
+# Background service and system tray
+pystray==0.19.5  # System tray icon support
+
 # System and network executors
 psutil==5.9.8
 aiohttp==3.9.5
