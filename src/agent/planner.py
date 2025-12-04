@@ -311,7 +311,7 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
         # Only use this heuristic if it's a SIMPLE open command without complex follow-up actions
         g = goal.lower()
         simple_open = ("open" in g or "start" in g or "launch" in g) and any(app in g for app in ["chrome", "firefox", "edge", "browser", "notepad", "vscode", "spotify", "slack"])
-        has_followup = any(word in g for word in ["write", "type", "click", "select", "fill", "enter", "submit"])
+        has_followup = any(word in g for word in ["write", "type", "click", "select", "fill", "enter", "submit", "search"])
         
         if simple_open and not has_followup:
             # Extract program name
@@ -329,6 +329,23 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             else:
                 heuristic = [{"tool": "process.start_program", "args": {"program": program, "background": True}}]
             
+            raw = json.dumps(heuristic)
+            return heuristic, raw, prompt
+
+        # Heuristic: web search with browser automation when explicitly mentioned
+        if ("search" in g) and any(word in g for word in ["open", "chrome", "firefox", "edge", "browser"]):
+            # Build a robust Playwright flow using browser.run_steps
+            query_match = re.search(r"search\s+(for\s+)?(.+?)(?:\.|,|;|$)", goal, flags=re.IGNORECASE)
+            query = query_match.group(2).strip() if query_match else goal
+            steps = [
+                {"action": "goto", "args": {"url": "https://www.google.com"}},
+                {"action": "wait_for_selector", "args": {"selector": 'input[name="q"]', "state": "visible"}},
+                {"action": "fill", "args": {"selector": 'input[name="q"]', "value": query}},
+                {"action": "press", "args": {"selector": 'input[name="q"]', "key": "Enter"}},
+                {"action": "wait_for_selector", "args": {"selector": "#search", "state": "visible"}},
+                {"action": "extract_text", "args": {"selector": "#search", "all": False}},
+            ]
+            heuristic = [{"tool": "browser.run_steps", "args": {"steps": steps, "headless": True, "stop_on_error": True}}]
             raw = json.dumps(heuristic)
             return heuristic, raw, prompt
 

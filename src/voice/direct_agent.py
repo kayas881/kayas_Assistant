@@ -46,6 +46,7 @@ from ..executors.cv_exec import CVExecutor, CVConfig
 from ..executors.perception_engine import PerceptionEngine, PerceptionConfig
 from ..memory.sqlite_memory import MemoryConfig, SQLiteMemory
 from ..memory.vector_memory import VectorMemory, VectorMemoryConfig
+from ..agent.multi_step_runner import MultiStepRunner
 
 
 class DirectAgent:
@@ -218,6 +219,10 @@ class DirectAgent:
             print("[DirectAgent] ReAct agent initialized")
         else:
             self.react_agent = None
+        
+        # Initialize multi-step runner for complex workflows
+        self.multi_step_runner = MultiStepRunner(self.llm, self.router, self.memory)
+        print("[DirectAgent] Multi-step runner initialized")
         
         # Initialize memory
         self.memory = SQLiteMemory(MemoryConfig(db_path=db_path()))
@@ -496,7 +501,34 @@ class DirectAgent:
                     "type": "conversation"
                 }
             
-            # Execute the plan
+            # Detect if this is a multi-step task that needs continuation logic
+            is_multistep = self._is_multistep_task(goal)
+            
+            if is_multistep:
+                print(f"[DirectAgent] Using multi-step runner for task: {goal}")
+                # Use multi-step runner for complex workflows
+                runner_result = self.multi_step_runner.run_task(
+                    goal=goal,
+                    initial_plan=plan["actions"],
+                    max_steps=10,
+                    conversation_context=conversation_context
+                )
+                
+                response = runner_result["response"]
+                results = runner_result["results"]
+                
+                self.memory.log_message(run_id, "assistant", response)
+                
+                return {
+                    "response": response,
+                    "run_id": run_id,
+                    "type": "action",
+                    "results": results,
+                    "completed": runner_result["completed"],
+                    "total_steps": runner_result["total_steps"]
+                }
+            
+            # Execute the plan (single-step execution)
             results = []
             for action_data in plan["actions"]:
                 try:
@@ -732,6 +764,59 @@ Just ask me naturally, like you would a friend! For example:
         web_actions = ["ask", "send message", "post", "tweet", "email"]
         if any(site in goal_lower for site in web_tasks) and any(action in goal_lower for action in web_actions):
             return True
+        
+        return False
+
+    def _is_multistep_task(self, goal: str) -> bool:
+        """
+        Detect if this task requires multi-step execution with continuation.
+        
+        Multi-step tasks are those where:
+        1. User issues a command with multiple sequential actions
+        2. The task requires decision-making after each step
+        3. Subsequent steps depend on previous results
+        
+        Examples:
+        - "Open Chrome and search for X" - needs browser open, then search
+        - "Open Chrome, select the kayas profile, and go to YouTube" - needs profile selection
+        - "Search for this, save results to notepad" - search then save
+        """
+        goal_lower = goal.lower()
+        
+        # Clear multi-step indicators
+        multistep_phrases = [
+            " and ", " then ", " after ", " next ",
+            " when ", " once ", " before "
+        ]
+        
+        # Count how many sequential actions are implied
+        action_count = 0
+        if any(phrase in goal_lower for phrase in multistep_phrases):
+            # Has explicit sequential markers
+            action_count = goal_lower.count(" and ") + goal_lower.count(" then ")
+            return action_count > 0
+        
+        # Patterns that imply multi-step even without explicit connectors
+        multistep_patterns = [
+            # Browser + action
+            (["chrome", "edge", "firefox"], ["search", "go to", "visit", "navigate"]),
+            (["chrome", "edge", "firefox"], ["profile", "account"]),
+            # File operations
+            (["open", "create"], ["save", "copy", "move", "paste"]),
+            # Search + save/share
+            (["search", "find"], ["save", "notepad", "document", "email", "slack"]),
+            (["search", "google"], ["save", "download", "copy"]),
+            # Open + select/interact
+            (["open"], ["select", "choose", "click", "profile", "account"]),
+            # Message/email operations
+            (["send", "write", "compose"], ["attach", "file", "document"]),
+        ]
+        
+        for first_keywords, second_keywords in multistep_patterns:
+            has_first = any(kw in goal_lower for kw in first_keywords)
+            has_second = any(kw in goal_lower for kw in second_keywords)
+            if has_first and has_second:
+                return True
         
         return False
 
