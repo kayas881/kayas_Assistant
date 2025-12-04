@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-import ollama
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
 
 
 class LLM:
     def __init__(self, model: str) -> None:
+        if not OLLAMA_AVAILABLE:
+            raise ImportError("ollama module not installed. Install with: pip install ollama")
         self.model = model
 
     def generate(self, prompt: str, system: Optional[str] = None, temperature: float = 0.2) -> str:

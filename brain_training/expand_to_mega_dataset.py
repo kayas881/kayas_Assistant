@@ -674,45 +674,63 @@ def generate_intent_plan_examples(n: int = 50) -> List[Dict[str, Any]]:
             {"action": "extract.summary", "args": {"source": "page"}}
         ]),
     ]
+    
     for _ in range(n):
         text, intent, plan = random.choice(commands)
+        # ✅ FIX: Add messages field
         samples.append({
+            "messages": [
+                {"role": "system", "content": "You are Kayas. Map user requests to structured action plans."},
+                {"role": "user", "content": text},
+                {"role": "assistant", "content": json.dumps({
+                    "intent": intent,
+                    "plan": plan
+                }, indent=2)}
+            ],
             "category": "intent_plan",
-            "scenario": "multi_step_plan",
-            "user": text,
-            "intent": intent,
-            "plan": plan
+            "scenario": "multi_step_plan"
         })
+    
     return samples
 
 
 def generate_tool_trace_examples(n: int = 50) -> List[Dict[str, Any]]:
     """Action→observation→next_action logs with retries and final_success."""
     traces: List[Dict[str, Any]] = []
+    
     for _ in range(n):
         ocr_words = random.sample(["Close", "Exit", "Cancel", "OK", "Apply"], k=2)
         match_score = round(random.random(), 2)
         result = "found" if match_score > 0.6 else "not_found"
         fallback = "press_alt_f4" if result == "not_found" else None
+        
+        # ✅ FIX: Add messages field
         traces.append({
-            "category": "tool_trace",
-            "scenario": "ui_click_with_ocr",
-            "log": [
-                {
-                    "step": "click_image",
-                    "result": result,
-                    "observation": {"ocr": ocr_words, "image_match_score": match_score},
-                    "retry": result == "not_found",
-                    "fallback": fallback
-                },
-                {
-                    "step": "verify_window_closed",
-                    "result": "success",
-                    "observation": {"windows_open": ["VS Code"]}
-                }
+            "messages": [
+                {"role": "system", "content": "You are Kayas. Track action results and retry on failures."},
+                {"role": "user", "content": "close the window using OCR"},
+                {"role": "assistant", "content": json.dumps({
+                    "log": [
+                        {
+                            "step": "click_image",
+                            "result": result,
+                            "observation": {"ocr": ocr_words, "image_match_score": match_score},
+                            "retry": result == "not_found",
+                            "fallback": fallback
+                        },
+                        {
+                            "step": "verify_window_closed",
+                            "result": "success",
+                            "observation": {"windows_open": ["VS Code"]}
+                        }
+                    ],
+                    "final_success": True
+                }, indent=2)}
             ],
-            "final_success": True
+            "category": "tool_trace",
+            "scenario": "ui_click_with_ocr"
         })
+    
     return traces
 
 
@@ -724,7 +742,7 @@ def generate_multistep_task_examples(n: int = 60) -> List[Dict[str, Any]]:
             "user": "search something on google → open a result → screenshot → extract info",
             "steps": [
                 {"tool": "browser.run_steps", "args": {"steps": [{"action": "goto", "args": {"url": "https://google.com"}}, {"action": "fill", "args": {"selector": "input[name=q]", "value": "python error handling best practices"}}, {"action": "enter", "args": {}}]}},
-                {"tool": "browser.run_steps", "args": {"steps": [{"action": "click", "args": {"selector": "#search a"}}]}},
+                {"tool": "browser.run_steps", "args": {"steps": [{"action": "click", "args": {"selector": "#search div.g:first-child a"}}]}},
                 {"tool": "browser.run_steps", "args": {"steps": [{"action": "screenshot", "args": {"filename": f"research/google_{get_timestamp()}.png"}}]}},
                 {"tool": "ocr.read_screen", "args": {}}
             ]
@@ -748,15 +766,23 @@ def generate_multistep_task_examples(n: int = 60) -> List[Dict[str, Any]]:
             ]
         }
     ]
+    
     for _ in range(n):
         p = random.choice(patterns)
+        # ✅ FIX: Add messages field
         tasks.append({
+            "messages": [
+                {"role": "system", "content": "You are Kayas, an AI assistant that helps users accomplish multi-step tasks."},
+                {"role": "user", "content": p["user"]},
+                {"role": "assistant", "content": json.dumps({
+                    "response": "Working on it…",
+                    "actions": p["steps"]
+                }, indent=2)}
+            ],
             "category": "multi_step_task",
-            "scenario": "real_world",
-            "response": "Working on it…",
-            "actions": p["steps"],
-            "user": p["user"]
+            "scenario": "real_world"
         })
+    
     return tasks
 
 
@@ -792,31 +818,49 @@ def generate_failure_recovery_examples(n: int = 40) -> List[Dict[str, Any]]:
             ]
         }
     ]
+    
     for _ in range(n):
         case = random.choice(cases)
+        # ✅ FIX: Add messages field
         examples.append({
+            "messages": [
+                {"role": "system", "content": "You are Kayas. When UI elements are missing, try alternative approaches."},
+                {"role": "user", "content": f"handle case: {case['step']}"},
+                {"role": "assistant", "content": json.dumps({
+                    "trace": case["attempts"],
+                    "final_success": True
+                }, indent=2)}
+            ],
             "category": "failure_recovery",
-            "scenario": case["step"],
-            "trace": case["attempts"],
-            "final_success": True
+            "scenario": case["step"]
         })
+    
     return examples
 
 
 def generate_persona_planning_examples(n: int = 50) -> List[Dict[str, Any]]:
     """Friendly response plus concrete actions in one example."""
     examples: List[Dict[str, Any]] = []
+    
     for _ in range(n):
+        # ✅ FIX: Add messages field
         examples.append({
+            "messages": [
+                {"role": "system", "content": "You are Kayas, a friendly assistant with personality."},
+                {"role": "user", "content": "yo bro clean up my downloads"},
+                {"role": "assistant", "content": json.dumps({
+                    "response": "sure bro, give me a sec — going through your downloads now",
+                    "actions": [
+                        {"tool": "fs.list", "args": {"path": "Downloads"}},
+                        {"tool": "fs.filter_by_age", "args": {"days": 30}},
+                        {"tool": "fs.delete", "args": {"files": ["1.png", "old.zip"]}}
+                    ]
+                }, indent=2)}
+            ],
             "category": "persona_planning",
-            "scenario": "downloads_cleanup",
-            "response": "sure bro, give me a sec — going through your downloads now",
-            "actions": [
-                {"tool": "fs.list", "args": {"path": "Downloads"}},
-                {"tool": "fs.filter_by_age", "args": {"days": 30}},
-                {"tool": "fs.delete", "args": {"files": ["1.png", "old.zip"]}}
-            ]
+            "scenario": "downloads_cleanup"
         })
+    
     return examples
 
 
@@ -1238,6 +1282,216 @@ Respond only with JSON in the above format."""
     }
 
 
+def generate_ui_continuation_scenarios() -> List[Dict]:
+    """Generate multi-step UI flows where second command continues the first.
+    These teach the model to handle state persistence and follow-up actions."""
+    scenarios = []
+    
+    # Pattern 1: Open app → interact with startup dialog (CRITICAL for account picker)
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Track the last action and use UI automation when apps show dialogs."},
+            {"role": "user", "content": "open chrome"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening Chrome...",
+                "actions": [{"tool": "process.start_program", "args": {"program": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "background": True}}]
+            }, indent=2)},
+            {"role": "user", "content": "use the kayas account"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Selecting your profile...",
+                "actions": [{"tool": "perception.smart_click", "args": {"target": "Kayas", "context": {"window_title": "Chrome"}}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "chrome_profile_selection"
+    })
+    
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Track state and handle account/profile selections."},
+            {"role": "user", "content": "launch microsoft edge"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening Edge...",
+                "actions": [{"tool": "process.start_program", "args": {"program": "msedge.exe", "background": True}}]
+            }, indent=2)},
+            {"role": "user", "content": "select work profile"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Switching to work profile...",
+                "actions": [{"tool": "perception.smart_click", "args": {"target": "work", "context": {}}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "edge_profile_selection"
+    })
+    
+    # Pattern 2: Open app → use keyboard shortcut
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Use keyboard shortcuts for UI actions when appropriate."},
+            {"role": "user", "content": "open notepad"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening Notepad...",
+                "actions": [{"tool": "process.start_program", "args": {"program": "notepad.exe", "background": True}}]
+            }, indent=2)},
+            {"role": "user", "content": "type hello world"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Typing...",
+                "actions": [{"tool": "perception.smart_type", "args": {"text": "hello world"}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "text_input"
+    })
+    
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Continue from previous actions."},
+            {"role": "user", "content": "open vs code"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening VS Code...",
+                "actions": [{"tool": "process.start_program", "args": {"program": "code.exe", "background": True}}]
+            }, indent=2)},
+            {"role": "user", "content": "create a new file"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Creating new file...",
+                "actions": [{"tool": "desktop.send_keys", "args": {"keys": "Ctrl+N"}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "vscode_new_file"
+    })
+    
+    # Pattern 3: Open file dialog → select file
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Handle file dialogs via UI automation."},
+            {"role": "user", "content": "open a file in notepad"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening file dialog...",
+                "actions": [
+                    {"tool": "process.start_program", "args": {"program": "notepad.exe", "background": True}},
+                    {"tool": "desktop.send_keys", "args": {"keys": "Ctrl+O"}}
+                ]
+            }, indent=2)},
+            {"role": "user", "content": "select notes.txt"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Selecting notes.txt...",
+                "actions": [
+                    {"tool": "perception.smart_type", "args": {"text": "notes.txt"}},
+                    {"tool": "desktop.send_keys", "args": {"keys": "Enter"}}
+                ]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "file_dialog"
+    })
+    
+    # Pattern 4: Search → click result
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. After web search, allow clicking specific results."},
+            {"role": "user", "content": "search python tutorials on google"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Searching...",
+                "actions": [{"tool": "browser.run_steps", "args": {"steps": [
+                    {"action": "goto", "args": {"url": "https://google.com/search?q=python+tutorials"}}
+                ]}}]
+            }, indent=2)},
+            {"role": "user", "content": "open the first result"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening first result...",
+                "actions": [{"tool": "browser.run_steps", "args": {"steps": [
+                    {"action": "click", "args": {"selector": "#search div.g:first-child a"}}
+                ]}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "search_click_result"
+    })
+    
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Handle sequential web actions."},
+            {"role": "user", "content": "go to youtube"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening YouTube...",
+                "actions": [{"tool": "browser.run_steps", "args": {"steps": [
+                    {"action": "goto", "args": {"url": "https://youtube.com"}}
+                ]}}]
+            }, indent=2)},
+            {"role": "user", "content": "search for ai tutorials"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Searching YouTube...",
+                "actions": [{"tool": "browser.run_steps", "args": {"steps": [
+                    {"action": "type", "args": {"selector": "input[name='search_query']", "text": "ai tutorials"}},
+                    {"action": "click", "args": {"selector": "#search-icon-legacy"}}
+                ]}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "youtube_search"
+    })
+    
+    # Pattern 5: Screenshot → describe/OCR
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Use OCR/vision to describe screen content."},
+            {"role": "user", "content": "take a screenshot"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Screenshot saved!",
+                "actions": [{"tool": "desktop.screenshot", "args": {"filename": f"screenshots/capture_{get_timestamp()}.png"}}]
+            }, indent=2)},
+            {"role": "user", "content": "what's on screen"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Reading screen...",
+                "actions": [{"tool": "perception.smart_read", "args": {"context": {}}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "screenshot_describe"
+    })
+    
+    # Pattern 6: Open app → click button
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Handle UI button interactions."},
+            {"role": "user", "content": "open calculator"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Opening Calculator...",
+                "actions": [{"tool": "process.start_program", "args": {"program": "calc.exe", "background": True}}]
+            }, indent=2)},
+            {"role": "user", "content": "click the 5 button"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Clicking 5...",
+                "actions": [{"tool": "perception.smart_click", "args": {"target": "5", "context": {"control_type": "button"}}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "calculator_button"
+    })
+    
+    # Pattern 7: Email → reply
+    scenarios.append({
+        "messages": [
+            {"role": "system", "content": "You are Kayas. Handle email workflows."},
+            {"role": "user", "content": "check my email"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Checking email...",
+                "actions": [{"tool": "email.list_recent", "args": {"limit": 10}}]
+            }, indent=2)},
+            {"role": "user", "content": "reply to the first one"},
+            {"role": "assistant", "content": json.dumps({
+                "response": "Composing reply...",
+                "actions": [{"tool": "email.send", "args": {"to": "sender@example.com", "subject": "Re: Previous subject", "body": ""}}]
+            }, indent=2)}
+        ],
+        "category": "ui_continuation",
+        "scenario": "email_reply"
+    })
+    
+    return scenarios
+
+
 def expand_dataset(base_examples: List[Dict], target_count: int = 1000) -> List[Dict]:
     """Expand dataset to target count with high-quality, diverse examples"""
     expanded = list(base_examples)
@@ -1254,6 +1508,17 @@ def expand_dataset(base_examples: List[Dict], target_count: int = 1000) -> List[
     # Get all dynamic scenarios (200+ unique)
     all_scenarios = get_all_scenarios()
     print(f"Generated {len(all_scenarios)} unique scenarios")
+    
+    # Add UI continuation scenarios (10% of target) - CRITICAL for follow-up commands
+    ui_continuation_target = int(0.10 * target_count)
+    ui_continuation_examples = generate_ui_continuation_scenarios()
+    ui_continuation_count = 0
+    
+    while ui_continuation_count < ui_continuation_target and len(expanded) < target_count:
+        expanded.append(ui_continuation_examples[ui_continuation_count % len(ui_continuation_examples)])
+        ui_continuation_count += 1
+    
+    print(f"Added {ui_continuation_count} UI continuation examples (state persistence & follow-ups)")
     
     # Add multi-turn conversations (10% of target)
     multi_turn_target = int(0.10 * target_count)

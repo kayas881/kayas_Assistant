@@ -1,0 +1,9 @@
+# Training dependencies for Qwen2-VL fine-tuning
+transformers>=4.37.0
+accelerate>=0.25.0
+peft>=0.7.0
+bitsandbytes>=0.41.0
+torch>=2.1.0
+pillow>=10.0.0
+tqdm>=4.65.0
+qwen-vl-utils

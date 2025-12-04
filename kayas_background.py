@@ -19,45 +19,37 @@ from src.voice.chat_agent import ChatAgent, ChatAgentConfig
 
 def main():
     print("=" * 80)
-    print("🎤 KAYAS BACKGROUND SERVICE")
+    print("💬 KAYAS CHAT AGENT")
     print("=" * 80)
     print()
-    print("Starting always-on voice assistant...")
-    print("The assistant will wake up when you say 'Kayas' followed by your command.")
+    print("Starting text-based assistant...")
+    print("Type your commands and press Enter.")
     print()
     print("Examples:")
-    print("  - 'Kayas, create a todo list'")
-    print("  - 'Kayas, open Chrome and search for AI news'")
-    print("  - 'Kayas, play some music'")
+    print("  - 'Create a todo list'")
+    print("  - 'Open Chrome and search for AI news'")
+    print("  - 'Play some music'")
     print()
-    print("Say 'Kayas, stop listening' to shut down.")
-    print("Or press Ctrl+C to exit.")
+    print("Type 'quit' or 'exit' to shut down.")
     print()
     print("=" * 80)
     print()
     
-    # Configure for background continuous listening
+    # Configure for text mode
     config = ChatAgentConfig(
-        voice_enabled=True,
-        continuous_listening=True,  # Always listening
-        auto_speak_responses=True,  # Speak responses
-        voice_activation_keywords=["kayas", "hey kayas", "okay kayas"],
+        voice_enabled=False,  # Text only
+        continuous_listening=False,
+        auto_speak_responses=False,
     )
     
     agent = ChatAgent(config)
     
     try:
-        # Start voice mode with continuous listening
-        if not agent.start_voice_mode():
-            print("❌ Failed to start voice mode. Check microphone and audio settings.")
-            print("\nTroubleshooting:")
-            print("1. Ensure microphone is connected and not muted")
-            print("2. Install required packages: pip install SpeechRecognition pyaudio pyttsx3")
-            print("3. On Windows, you may need to allow microphone access in Privacy settings")
-            sys.exit(1)
+        # Start text mode
+        agent.start_text_mode()
             
     except KeyboardInterrupt:
-        print("\n\n🛑 Shutting down Kayas background service...")
+        print("\n\n🛑 Shutting down Kayas...")
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback

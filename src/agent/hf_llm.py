@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 from typing import Iterable, Optional, List, Dict
+import warnings
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
+# Suppress BitsAndBytes warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 try:
+    # Prevent BNB from trying to compile torch code on import
+    import os
+    os.environ["TORCH_COMPILE_DEBUG"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Use first GPU only
+    
+    # Try importing BNB with fewer issues
     from transformers import BitsAndBytesConfig  # type: ignore
     _HAS_BNB = True
-except Exception:
+except Exception as e:
+    print(f"Warning: BitsAndBytes not available ({type(e).__name__}), will use full precision")
     _HAS_BNB = False
 
 try:
@@ -16,6 +27,53 @@ try:
     _HAS_PEFT = True
 except Exception:
     _HAS_PEFT = False
+
+
+# Global model cache to avoid reloading
+_GLOBAL_MODEL_CACHE: Dict[str, tuple] = {}  # key: (model_name, adapter_dir) -> (model, tokenizer)
+
+
+def _load_peft_model(model, adapter_dir: str):
+    """Load PEFT adapter, handling version incompatibilities."""
+    if not _HAS_PEFT:
+        raise RuntimeError("peft is required but not installed")
+    
+    # Load adapter config and remove incompatible fields
+    import json
+    from pathlib import Path
+    
+    adapter_config_path = Path(adapter_dir) / "adapter_config.json"
+    if adapter_config_path.exists():
+        with open(adapter_config_path) as f:
+            config = json.load(f)
+        
+        # Remove fields that cause compatibility issues with newer PEFT versions
+        incompatible_fields = [
+            "ensure_weight_tying",
+            "exclude_modules",
+            "lora_bias",
+            "alpha_pattern",
+            "rank_pattern",
+            "qalora_group_size",
+            "peft_version",
+        ]
+        
+        removed = []
+        for field in incompatible_fields:
+            if field in config:
+                removed.append(field)
+                del config[field]
+        
+        if removed:
+            print(f"[HFLLM] Removed incompatible PEFT fields: {removed}")
+            
+            # Save cleaned config
+            with open(adapter_config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+            print(f"[HFLLM] Updated adapter config")
+    
+    # Load the adapter
+    return PeftModel.from_pretrained(model, adapter_dir)
 
 
 class HFLLM:
@@ -46,6 +104,20 @@ class HFLLM:
     def _ensure_loaded(self) -> None:
         if self._loaded:
             return
+        
+        # Check global cache first
+        cache_key = (self.model_name, self.adapter_dir)
+        if cache_key in _GLOBAL_MODEL_CACHE:
+            print(f"[HFLLM] Reusing cached model")
+            self.model, self.tokenizer = _GLOBAL_MODEL_CACHE[cache_key]
+            self._loaded = True
+            print("[HFLLM] ✓ Model ready for generation (from cache)")
+            return
+        
+        print(f"[HFLLM] Loading model: {self.model_name}")
+        print(f"[HFLLM] Adapter: {self.adapter_dir if self.adapter_dir else 'None'}")
+        print(f"[HFLLM] 4-bit quantization: {self.use_4bit and _HAS_BNB}")
+        
         # Load tokenizer
         tok = AutoTokenizer.from_pretrained(
             self.model_name,
@@ -56,26 +128,46 @@ class HFLLM:
         if tok.pad_token_id is None:
             tok.pad_token = tok.eos_token
 
-        # Configure quantization if available
+        # Configure quantization if available and enabled
         quant_config = None
         if self.use_4bit and _HAS_BNB:
-            quant_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-            )
+            print("[HFLLM] Creating BitsAndBytesConfig for 4-bit quantization...")
+            try:
+                quant_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
+                )
+                print("[HFLLM] ✓ BitsAndBytesConfig created successfully")
+            except Exception as e:
+                print(f"[HFLLM] Failed to create BitsAndBytesConfig: {e}")
+                quant_config = None
 
-        # Load model
+        # Load model with appropriate settings
+        print("[HFLLM] Loading model from HuggingFace...")
+        load_kwargs = {
+            "device_map": "auto",
+            "trust_remote_code": True,
+            "low_cpu_mem_usage": True,
+            "local_files_only": False,
+        }
+        
+        if quant_config:
+            load_kwargs["quantization_config"] = quant_config
+            # Enable CPU offload for 4-bit when GPU memory is insufficient
+            load_kwargs["max_memory"] = {0: "3.5GB", "cpu": "30GB"}
+        else:
+            # Use float16 for non-quantized to save memory
+            if torch.cuda.is_available():
+                load_kwargs["dtype"] = torch.float16
+        
         mdl = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            quantization_config=quant_config,
-            device_map="auto",
-            torch_dtype=torch.float16 if torch.cuda.is_available() else None,
-            trust_remote_code=True,
-            low_cpu_mem_usage=True,
-            local_files_only=False,
+            **load_kwargs
         )
+        print("[HFLLM] ✓ Model loaded")
+        
         if self.attn_eager:
             try:
                 mdl.config.attn_implementation = "eager"
@@ -85,9 +177,9 @@ class HFLLM:
 
         # Attach adapter if provided (and not already merged)
         if self.adapter_dir:
-            if not _HAS_PEFT:
-                raise RuntimeError("peft is required to load LoRA adapter but is not installed.")
-            mdl = PeftModel.from_pretrained(mdl, self.adapter_dir)
+            print(f"[HFLLM] Loading LoRA adapter from {self.adapter_dir}...")
+            mdl = _load_peft_model(mdl, self.adapter_dir)
+            print("[HFLLM] ✓ LoRA adapter loaded")
 
         mdl.eval()
 
@@ -95,6 +187,11 @@ class HFLLM:
         self.tokenizer = tok
         self.model = mdl
         self._loaded = True
+        
+        # Store in global cache
+        _GLOBAL_MODEL_CACHE[cache_key] = (mdl, tok)
+        
+        print("[HFLLM] ✓ Model ready for generation")
 
     def _build_messages(self, prompt: str, system: Optional[str]) -> List[Dict[str, str]]:
         msgs: List[Dict[str, str]] = []

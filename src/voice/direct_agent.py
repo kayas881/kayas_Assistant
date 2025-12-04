@@ -11,7 +11,8 @@ from ..agent.config import (
     artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, 
     search_root, smtp_config, google_calendar_config, slack_config, 
     spotify_config, desktop_enabled, github_config, notion_config,
-    trello_config, jira_config, planning_mode, llm_backend
+    trello_config, jira_config, planning_mode, llm_backend,
+    hf_base_model, hf_merged_model_dir, hf_adapter_dir, hf_use_4bit
 )
 from ..agent.llm import LLM
 from ..agent.hf_llm import HFLLM
@@ -55,7 +56,21 @@ class DirectAgent:
         backend = llm_backend()
         if backend == "hf":
             print("[DirectAgent] Using HuggingFace backend")
-            self.llm = HFLLM()
+            # Get HF config values
+            merged = hf_merged_model_dir()
+            base = hf_base_model()
+            adapter = hf_adapter_dir()
+            use_4bit = hf_use_4bit()
+            
+            # Use merged model if specified, otherwise base + adapter
+            base_or_merged = merged if merged else base
+            adapter_to_load = None if merged else adapter
+            
+            self.llm = HFLLM(
+                base_or_merged=base_or_merged,
+                adapter_dir=adapter_to_load,
+                use_4bit=use_4bit
+            )
         else:
             print(f"[DirectAgent] Using Ollama backend with model: {ollama_model()}")
             self.llm = LLM(model=ollama_model())
