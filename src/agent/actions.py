@@ -247,6 +247,13 @@ class Router:
                 )
             if t == "process.get_system_info":
                 return self.executors["process"].get_system_info()
+            if t == "process.monitor_process":
+                return self.executors["process"].monitor_process(
+                    process_name=a.get("process_name"),
+                    pid=a.get("pid"),
+                    timeout=a.get("timeout", 60),
+                    alert_on_exit=a.get("alert_on_exit", False)
+                )
             # Clipboard executor
             if t == "clipboard.copy_text":
                 return self.executors["clipboard"].copy_text(
@@ -270,6 +277,11 @@ class Router:
                 )
             if t == "clipboard.clear_history":
                 return self.executors["clipboard"].clear_history()
+            if t == "clipboard.monitor":
+                return self.executors["clipboard"].monitor(
+                    pattern=a.get("pattern"),
+                    timeout=a.get("timeout", 60)
+                )
             # Network executor
             if t == "network.http_request":
                 return self.executors["network"].http_request(
@@ -320,6 +332,12 @@ class Router:
                 )
             if t == "filewatcher.clear_event_log":
                 return self.executors["filewatcher"].clear_event_log()
+            if t == "filewatcher.wait_for_file":
+                return self.executors["filewatcher"].wait_for_file(
+                    path=a["path"],
+                    timeout=a.get("timeout", 300),
+                    event_type=a.get("event_type", "created")
+                )
             # LLM executor
             if t == "llm.generate":
                 return self.executors["llm"].generate(
@@ -456,6 +474,11 @@ class Router:
             if t == "ocr.find_buttons":
                 return self.executors["ocr"].find_buttons(
                     region=a.get("region")
+                )
+            if t == "ocr.read_region":
+                return self.executors["ocr"].read_region(
+                    region=a["region"],
+                    language=a.get("language", "eng")
                 )
             # Phase 1: Perception Engine (smart tools)
             if t == "perception.smart_click":

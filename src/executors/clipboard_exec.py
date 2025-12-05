@@ -16,12 +16,15 @@ import base64
 class ClipboardConfig:
     history_size: int = 50
     auto_save: bool = True
+    monitor_enabled: bool = False
 
 
 class ClipboardExecutor:
     def __init__(self, cfg: ClipboardConfig | None = None):
         self.cfg = cfg or ClipboardConfig()
         self.history: List[Dict[str, Any]] = []
+        self.monitor_active: bool = False
+        self.last_clipboard_content: str = ""
 
     def copy_text(self, text: str, add_to_history: bool = True) -> Dict[str, Any]:
         """Copy text to clipboard."""
@@ -176,3 +179,101 @@ class ClipboardExecutor:
         # Keep history size in check
         if len(self.history) > self.cfg.history_size:
             self.history = self.history[-self.cfg.history_size:]
+
+    def monitor(self, pattern: str | None = None, timeout: int = 60) -> Dict[str, Any]:
+        """Monitor clipboard for changes and optionally match a pattern.
+        
+        Args:
+            pattern: Optional regex pattern to match clipboard content
+            timeout: Duration to monitor in seconds (0 = indefinite)
+            
+        Returns:
+            {
+                "action": "clipboard.monitor",
+                "success": bool,
+                "monitor_id": str,
+                "changes": [
+                    {
+                        "type": "text" or "image",
+                        "timestamp": float,
+                        "preview": str,
+                        "matched": bool
+                    }
+                ],
+                "match_found": bool
+            }
+        """
+        import time
+        import re
+        
+        try:
+            monitor_id = f"clipboard_monitor_{time.time()}"
+            changes = []
+            start_time = time.time()
+            match_found = False
+            
+            # Get initial clipboard content
+            try:
+                self.last_clipboard_content = pyperclip.paste()
+            except:
+                self.last_clipboard_content = ""
+            
+            # Monitor for timeout duration
+            while timeout == 0 or (time.time() - start_time < timeout):
+                try:
+                    current_content = pyperclip.paste()
+                    
+                    # Check if content changed
+                    if current_content != self.last_clipboard_content:
+                        # Determine if it's text or image
+                        is_text = isinstance(current_content, str)
+                        content_type = "text" if is_text else "image"
+                        
+                        # Check if matches pattern
+                        matched = False
+                        if pattern and is_text:
+                            try:
+                                matched = bool(re.search(pattern, current_content))
+                            except re.error:
+                                matched = False
+                        
+                        change_event = {
+                            "type": content_type,
+                            "timestamp": time.time(),
+                            "preview": current_content[:200] if is_text else "[image_data]",
+                            "matched": matched
+                        }
+                        
+                        changes.append(change_event)
+                        self.last_clipboard_content = current_content
+                        
+                        # Add to history
+                        self._add_to_history(content_type, current_content)
+                        
+                        # Stop if pattern matched
+                        if pattern and matched:
+                            match_found = True
+                            break
+                    
+                    time.sleep(0.5)  # Check every 500ms
+                    
+                except Exception:
+                    pass  # Continue monitoring on error
+            
+            return {
+                "action": "clipboard.monitor",
+                "success": True,
+                "monitor_id": monitor_id,
+                "changes": changes,
+                "change_count": len(changes),
+                "match_found": match_found,
+                "elapsed": time.time() - start_time,
+                "pattern": pattern
+            }
+            
+        except Exception as e:
+            return {
+                "action": "clipboard.monitor",
+                "success": False,
+                "error": str(e)
+            }

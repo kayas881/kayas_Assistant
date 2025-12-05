@@ -311,7 +311,7 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
         # Only use this heuristic if it's a SIMPLE open command without complex follow-up actions
         g = goal.lower()
         simple_open = ("open" in g or "start" in g or "launch" in g) and any(app in g for app in ["chrome", "firefox", "edge", "browser", "notepad", "vscode", "spotify", "slack"])
-        has_followup = any(word in g for word in ["write", "type", "click", "select", "fill", "enter", "submit", "search"])
+        has_followup = any(word in g for word in ["write", "type", "click", "select", "fill", "enter", "submit", "search", "play", "text", "message", "send"])
         
         if simple_open and not has_followup:
             # Extract program name

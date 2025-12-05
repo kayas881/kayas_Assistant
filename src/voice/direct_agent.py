@@ -220,16 +220,16 @@ class DirectAgent:
         else:
             self.react_agent = None
         
-        # Initialize multi-step runner for complex workflows
-        self.multi_step_runner = MultiStepRunner(self.llm, self.router, self.memory)
-        print("[DirectAgent] Multi-step runner initialized")
-        
-        # Initialize memory
+        # Initialize memory BEFORE multi-step runner
         self.memory = SQLiteMemory(MemoryConfig(db_path=db_path()))
         self.vmem = VectorMemory(VectorMemoryConfig(
             persist_dir=chroma_dir(),
             embed_model=embed_model()
         ))
+        
+        # Initialize multi-step runner for complex workflows
+        self.multi_step_runner = MultiStepRunner(self.llm, self.router, self.memory)
+        print("[DirectAgent] Multi-step runner initialized")
 
     def run(self, goal: str, conversation_context: str = "") -> Dict[str, Any]:
         """Run the agent with a goal and return a conversational response.

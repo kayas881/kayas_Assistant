@@ -31,6 +31,10 @@ try:
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
+    # Avoid NameError for type hints when deps are missing
+    Image = type("ImagePlaceholder", (object,), {})  # type: ignore
+    Image.Image = Image  # type: ignore[attr-defined]
+    ImageGrab = type("ImageGrabPlaceholder", (object,), {})  # type: ignore
 
 
 @dataclass
@@ -426,3 +430,61 @@ class OCRExecutor:
             "count": len(buttons),
             "buttons": buttons
         }
+    
+    def read_region(self, region: Tuple[int, int, int, int], language: str = "eng") -> Dict[str, Any]:
+        """
+        Read text from a specific screen region using OCR.
+        
+        Args:
+            region: (left, top, width, height) of the region to read
+            language: OCR language (default: "eng")
+            
+        Returns:
+            {
+                "success": bool,
+                "text": str,  # All text from region
+                "items": [...],  # Individual text items with positions
+                "item_count": int
+            }
+        """
+        try:
+            # Capture the region
+            screenshot = self.capture_screen(region)
+            
+            # Run OCR on the region
+            ocr_results = self.ocr_image(screenshot)
+            
+            # Extract text
+            all_text = " ".join([r["text"] for r in ocr_results])
+            
+            # Adjust positions to account for region offset
+            if region:
+                for result in ocr_results:
+                    result["left"] += region[0]
+                    result["top"] += region[1]
+            
+            # Also get paragraph mode for better formatting
+            if self.config.preprocessing:
+                screenshot = self.preprocess_image(screenshot)
+            
+            full_text = pytesseract.image_to_string(
+                screenshot,
+                lang=language
+            )
+            
+            return {
+                "action": "ocr.read_region",
+                "success": True,
+                "region": region,
+                "text": all_text,
+                "items": ocr_results,
+                "item_count": len(ocr_results),
+                "full_text": full_text.strip()
+            }
+            
+        except Exception as e:
+            return {
+                "action": "ocr.read_region",
+                "success": False,
+                "error": f"Error reading region: {str(e)}"
+            }

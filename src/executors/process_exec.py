@@ -287,3 +287,132 @@ class ProcessExecutor:
                 "success": False,
                 "error": str(e)
             }
+
+    def monitor_process(self, process_name: str | None = None, pid: int | None = None, 
+                       timeout: int = 60, alert_on_exit: bool = False) -> Dict[str, Any]:
+        """Monitor a process for lifecycle events (start, exit, resource usage).
+        
+        Args:
+            process_name: Name of process to monitor (e.g., "chrome.exe")
+            pid: Process ID to monitor
+            timeout: Duration to monitor in seconds
+            alert_on_exit: Whether to trigger alert when process exits
+            
+        Returns:
+            {
+                "action": "process.monitor_process",
+                "success": bool,
+                "monitor_id": str,
+                "process_info": {...},
+                "events": [...]
+            }
+        """
+        import time
+        
+        try:
+            monitor_id = f"monitor_{process_name or pid}_{time.time()}"
+            events = []
+            start_time = time.time()
+            process = None
+            
+            # Find the process
+            if pid:
+                try:
+                    process = psutil.Process(pid)
+                except psutil.NoSuchProcess:
+                    return {
+                        "action": "process.monitor_process",
+                        "success": False,
+                        "error": f"Process with PID {pid} not found"
+                    }
+            elif process_name:
+                for proc in psutil.process_iter(['pid', 'name']):
+                    try:
+                        if process_name.lower() in proc.info['name'].lower():
+                            process = psutil.Process(proc.info['pid'])
+                            break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                
+                if not process:
+                    return {
+                        "action": "process.monitor_process",
+                        "success": False,
+                        "error": f"Process '{process_name}' not found"
+                    }
+            else:
+                return {
+                    "action": "process.monitor_process",
+                    "success": False,
+                    "error": "Either process_name or pid must be provided"
+                }
+            
+            # Record initial state
+            initial_info = {
+                "name": process.name(),
+                "pid": process.pid,
+                "status": process.status(),
+                "create_time": process.create_time(),
+                "timestamp": time.time()
+            }
+            
+            events.append({
+                "type": "monitor_start",
+                "timestamp": time.time(),
+                "process_info": initial_info
+            })
+            
+            # Monitor for timeout duration
+            while time.time() - start_time < timeout:
+                try:
+                    # Check if process still exists
+                    if process.is_running():
+                        try:
+                            cpu_percent = process.cpu_percent(interval=0.5)
+                            memory_info = process.memory_info()
+                            
+                            events.append({
+                                "type": "resource_sample",
+                                "timestamp": time.time(),
+                                "cpu_percent": cpu_percent,
+                                "memory_mb": memory_info.rss / 1024 / 1024,
+                                "process_status": process.status()
+                            })
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    else:
+                        # Process has exited
+                        events.append({
+                            "type": "process_exit",
+                            "timestamp": time.time(),
+                            "alert_triggered": alert_on_exit
+                        })
+                        break
+                    
+                    time.sleep(1)  # Sample every second
+                    
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Process no longer accessible
+                    events.append({
+                        "type": "process_exit",
+                        "timestamp": time.time(),
+                        "alert_triggered": alert_on_exit
+                    })
+                    break
+            
+            return {
+                "action": "process.monitor_process",
+                "success": True,
+                "monitor_id": monitor_id,
+                "process_info": initial_info,
+                "events": events,
+                "elapsed": time.time() - start_time,
+                "alert_on_exit": alert_on_exit
+            }
+            
+        except Exception as e:
+            return {
+                "action": "process.monitor_process",
+                "success": False,
+                "error": str(e)
+            }

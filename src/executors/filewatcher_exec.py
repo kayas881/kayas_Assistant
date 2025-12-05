@@ -165,6 +165,74 @@ class FileWatcherExecutor:
                 "error": str(e)
             }
 
+    def wait_for_file(self, path: str, timeout: int = 300, event_type: str = "created") -> Dict[str, Any]:
+        """Wait for a file to be created, modified, or deleted.
+        
+        Args:
+            path: File path to wait for
+            timeout: Maximum seconds to wait
+            event_type: "created", "modified", or "deleted"
+            
+        Returns:
+            {"success": bool, "found": bool, "elapsed": float, "event": dict}
+        """
+        import time
+        
+        try:
+            path_obj = Path(path).resolve()
+            parent_dir = str(path_obj.parent)
+            filename = path_obj.name
+            
+            # Start watching the parent directory
+            watch_id = f"wait_file_{time.time()}"
+            watch_result = self.watch_directory(parent_dir, watch_id=watch_id)
+            
+            if not watch_result["success"]:
+                return {
+                    "action": "filewatcher.wait_for_file",
+                    "success": False,
+                    "error": f"Could not watch directory: {parent_dir}"
+                }
+            
+            start_time = time.time()
+            
+            # Poll for the event
+            while time.time() - start_time < timeout:
+                events = self.get_event_log(watch_id=watch_id, limit=100)
+                
+                if events["success"]:
+                    for event in events["events"]:
+                        if filename in event.get("src_path", ""):
+                            if event.get("type") == event_type:
+                                self.stop_watching(watch_id)
+                                return {
+                                    "action": "filewatcher.wait_for_file",
+                                    "success": True,
+                                    "found": True,
+                                    "elapsed": time.time() - start_time,
+                                    "event": event,
+                                    "path": str(path_obj)
+                                }
+                
+                time.sleep(0.5)  # Check every 500ms
+            
+            # Timeout
+            self.stop_watching(watch_id)
+            return {
+                "action": "filewatcher.wait_for_file",
+                "success": True,
+                "found": False,
+                "elapsed": time.time() - start_time,
+                "error": f"File event '{event_type}' not detected within {timeout}s for {path}"
+            }
+            
+        except Exception as e:
+            return {
+                "action": "filewatcher.wait_for_file",
+                "success": False,
+                "error": str(e)
+            }
+
     def _log_event(self, event_type: str, src_path: str, dest_path: str | None = None,
                    watch_id: str | None = None) -> None:
         """Log a file system event."""

@@ -66,6 +66,11 @@ docs_output/
 .sphinx-cache/
 .cache/sphinx/
 
+# Markdown docs (keep README files only)
+*.md
+!README.md
+!**/README.md
+
 # Common generated document formats
 *.pdf
 *.docx

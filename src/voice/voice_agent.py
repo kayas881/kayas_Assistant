@@ -32,7 +32,9 @@ except ImportError:
 try:
     import whisper
     WHISPER_AVAILABLE = True
-except ImportError:
+except Exception as e:
+    # On Windows, whisper can fail to load libc; mark unavailable so we fall back gracefully
+    print(f"Whisper import failed, disabling Whisper STT: {e}")
     WHISPER_AVAILABLE = False
 
 try:

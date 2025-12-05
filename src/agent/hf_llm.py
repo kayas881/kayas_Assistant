@@ -146,26 +146,61 @@ class HFLLM:
 
         # Load model with appropriate settings
         print("[HFLLM] Loading model from HuggingFace...")
+        
+        # Detect device
+        has_cuda = torch.cuda.is_available()
+        print(f"[HFLLM] CUDA available: {has_cuda}")
+        if has_cuda:
+            print(f"[HFLLM] GPU: {torch.cuda.get_device_name(0)}")
+        
         load_kwargs = {
-            "device_map": "auto",
             "trust_remote_code": True,
             "low_cpu_mem_usage": True,
             "local_files_only": False,
         }
         
+        # Use device_map="auto" for GPU, fallback to CPU only if necessary
+        if has_cuda:
+            load_kwargs["device_map"] = "auto"
+            if quant_config:
+                # For 4-bit, specify memory allocation
+                load_kwargs["max_memory"] = {0: "8GB", "cpu": "30GB"}
+            else:
+                # For full precision, use mixed precision
+                load_kwargs["dtype"] = torch.float16
+        else:
+            # CPU-only mode
+            print("[HFLLM] WARNING: Running on CPU - this will be very slow!")
+            load_kwargs["device_map"] = "cpu"
+            # Disable quantization on CPU
+            quant_config = None
+            load_kwargs["dtype"] = torch.float32
+        
         if quant_config:
             load_kwargs["quantization_config"] = quant_config
-            # Enable CPU offload for 4-bit when GPU memory is insufficient
-            load_kwargs["max_memory"] = {0: "3.5GB", "cpu": "30GB"}
-        else:
-            # Use float16 for non-quantized to save memory
-            if torch.cuda.is_available():
-                load_kwargs["dtype"] = torch.float16
         
-        mdl = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            **load_kwargs
-        )
+        try:
+            mdl = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                **load_kwargs
+            )
+        except RuntimeError as e:
+            if "accelerator" in str(e).lower() or "device" in str(e).lower():
+                print(f"[HFLLM] Device error with device_map='auto', retrying with CPU: {e}")
+                load_kwargs = {
+                    "trust_remote_code": True,
+                    "low_cpu_mem_usage": True,
+                    "local_files_only": False,
+                    "device_map": "cpu",
+                    "dtype": torch.float32,
+                }
+                mdl = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    **load_kwargs
+                )
+            else:
+                raise
+        
         print("[HFLLM] ✓ Model loaded")
         
         if self.attn_eager:
@@ -201,46 +236,35 @@ class HFLLM:
         return msgs
 
     def generate(self, prompt: str, system: Optional[str] = None, temperature: float = 0.2, max_tokens: Optional[int] = None) -> str:
-        import signal
         import time
-        
-        def timeout_handler(signum, frame):
-            raise TimeoutError("Model generation timed out after 60 seconds")
+        # Removed signal/timeout logic because it can cause crashes on Windows
         
         try:
-            # Lazy load heavy assets on first generate
             self._ensure_loaded()
-            assert self.tokenizer is not None and self.model is not None
             messages = self._build_messages(prompt, system)
             text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.tokenizer([text], return_tensors="pt")
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
+            # INCREASED TOKEN LIMIT TO 1024
             gen_conf = GenerationConfig(
                 do_sample=True,
                 temperature=temperature,
                 top_p=0.9,
-                max_new_tokens=max_tokens or 512,
+                max_new_tokens=max_tokens or 1024,  # <--- CHANGED FROM 512
                 eos_token_id=self.tokenizer.eos_token_id,
                 pad_token_id=self.tokenizer.pad_token_id,
             )
             
-            # Set timeout on Windows (different approach since SIGALRM doesn't work)
-            start_time = time.time()
             with torch.inference_mode():
                 out = self.model.generate(**inputs, generation_config=gen_conf)
-                
-            elapsed = time.time() - start_time
-            if elapsed > 120:  # 2 minute warning
-                print(f"Warning: Generation took {elapsed:.1f}s")
             
-            # Decode only the new tokens (skip the input prompt)
             input_length = inputs['input_ids'].shape[1]
             generated_ids = out[0][input_length:]
             decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
             
-            # Additional cleanup for common chat template artifacts
-            decoded = decoded.replace("<|im_end|>", "").strip()
+            # Clean up common artifacts
+            decoded = decoded.replace("<|im_end|>", "").replace("```json", "").replace("```", "").strip()
             
             return decoded
         except Exception as e:

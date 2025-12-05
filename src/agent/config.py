@@ -43,7 +43,8 @@ def llm_backend() -> str:
     val = profile_get("models.backend", None)
     if val:
         return str(val).lower()
-    return env_str("AGENT_LLM_BACKEND", "ollama").lower()
+    # CHANGE: Set default to 'hf'
+    return env_str("AGENT_LLM_BACKEND", "hf").lower()
 
 
 # Remote HTTP LLM backend config
@@ -69,9 +70,16 @@ def hf_merged_model_dir() -> str:
     return env_str("HF_MERGED_MODEL_DIR", str(profile_get("models.hf.merged_model_dir", "")))
 
 
-def hf_adapter_dir() -> str:
-    return env_str("HF_ADAPTER_DIR", str(profile_get("models.hf.adapter_dir", "")))
+# src/agent/config.py
 
+def hf_adapter_dir() -> str:
+    # CHANGE: Point this default to your adapter path
+    # Using os.path.abspath ensures it finds the folder regardless of where you run the command from
+    default_path = os.path.join(os.getcwd(), "brain_training", "final_adapter")
+    return env_str("HF_ADAPTER_DIR", str(profile_get("models.hf.adapter_dir", default_path)))
+
+
+# src/agent/config.py
 
 def hf_use_4bit() -> bool:
     val = profile_get("models.hf.use_4bit", None)
