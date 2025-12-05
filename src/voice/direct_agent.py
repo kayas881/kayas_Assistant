@@ -3,9 +3,10 @@ Direct agent wrapper that integrates all tools without HTTP calls.
 """
 from __future__ import annotations
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import uuid
+import re
 
 from ..agent.config import (
     artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, 
@@ -322,6 +323,28 @@ class DirectAgent:
             # Add heuristic handling for common requests before calling LLM
             goal_lower = goal.lower()
             heuristic_plan = None
+
+            wait_ms: Optional[int] = None
+            wait_match = re.search(r"wait\s+(\d+)", goal_lower)
+            if wait_match:
+                wait_ms = max(1000, min(30000, int(wait_match.group(1)) * 1000))
+
+            selection_match = re.search(
+                r"(?:select|click on|find)\s+(?:the\s+)?['\"]?([^'\"\n]+)['\"]?(?:\s+(?:account|button|profile|option|menu))?",
+                goal,
+                re.IGNORECASE,
+            )
+            selection_target = selection_match.group(1).strip(" '\"") if selection_match else None
+            selection_window = None
+            if selection_target:
+                if "chrome" in goal_lower:
+                    selection_window = "Chrome"
+                elif "edge" in goal_lower:
+                    selection_window = "Microsoft Edge"
+                elif "whatsapp" in goal_lower:
+                    selection_window = "WhatsApp"
+                elif "discord" in goal_lower:
+                    selection_window = "Discord"
             
             if "cpu" in goal_lower or "memory" in goal_lower or "system" in goal_lower:
                 heuristic_plan = [{"tool": "process.get_system_info", "args": {}}]
@@ -410,7 +433,6 @@ class DirectAgent:
                     }]
             elif "copy" in goal_lower:
                 # Extract text to copy
-                import re
                 match = re.search(r"'([^']+)'|\"([^\"]+)\"", goal)
                 if match:
                     text = match.group(1) or match.group(2)
@@ -431,7 +453,6 @@ class DirectAgent:
                 heuristic_plan = [{"tool": "llm.summarize", "args": {"text": text}}]
             elif "click" in goal_lower and "button" in goal_lower:
                 # Extract button name
-                import re
                 match = re.search(r"click (?:the )?['\"]?([^'\"]+)['\"]? button", goal_lower)
                 if match:
                     button_name = match.group(1)
@@ -444,7 +465,6 @@ class DirectAgent:
                     }]
             elif ("type" in goal_lower or "enter" in goal_lower) and not ("text" in goal_lower and "read" in goal_lower):
                 # Extract text to type
-                import re
                 match = re.search(r"type ['\"]([^'\"]+)['\"]", goal)
                 if match:
                     text = match.group(1)
@@ -457,22 +477,55 @@ class DirectAgent:
                     "tool": "perception.smart_read",
                     "args": {"context": {}}
                 }]
-            elif any(word in goal_lower for word in ["select", "click on", "find"]) and \
-                 any(word in goal_lower for word in ["account", "button", "profile", "option", "menu"]):
-                # Commands that reference screen elements - capture and search for them
-                import re
-                # Try to extract what to find (text in quotes or after "select/click")
-                match = re.search(r"(?:select|click on|find) (?:the )?['\"]?([^'\"]+?)['\"]?(?: account| button| profile| option| menu)?", goal_lower)
-                if match:
-                    target_text = match.group(1).strip()
-                    heuristic_plan = [{
-                        "tool": "perception.smart_click",
-                        "args": {
-                            "target": target_text,
-                            "context": {"take_screenshot": True}
-                        }
-                    }]
-            
+
+            if selection_target:
+                selection_context: Dict[str, Any] = {"take_screenshot": True}
+                if selection_window:
+                    selection_context["window_title"] = selection_window
+                selection_action = {
+                    "tool": "perception.smart_click",
+                    "args": {
+                        "target": selection_target,
+                        "context": selection_context,
+                    },
+                }
+
+                if heuristic_plan:
+                    requires_launch = any(
+                        action.get("tool") in {"process.start_program", "process.run_command"}
+                        for action in heuristic_plan
+                    )
+                    has_sleep = any(
+                        action.get("tool") == "desktop.run_steps" and any(
+                            step.get("action") == "sleep"
+                            for step in action.get("args", {}).get("steps", [])
+                        )
+                        for action in heuristic_plan
+                    )
+                    wait_duration = wait_ms or (5000 if requires_launch else None)
+                    if wait_duration and not has_sleep:
+                        heuristic_plan.append({
+                            "tool": "desktop.run_steps",
+                            "args": {
+                                "steps": [
+                                    {"action": "sleep", "args": {"ms": wait_duration}}
+                                ]
+                            },
+                        })
+                    heuristic_plan.append(selection_action)
+                else:
+                    heuristic_plan = []
+                    if wait_ms:
+                        heuristic_plan.append({
+                            "tool": "desktop.run_steps",
+                            "args": {
+                                "steps": [
+                                    {"action": "sleep", "args": {"ms": wait_ms}}
+                                ]
+                            },
+                        })
+                    heuristic_plan.append(selection_action)
+
             if heuristic_plan:
                 print(f"DEBUG: Using heuristic plan: {heuristic_plan}")
                 plan = {"actions": heuristic_plan}
@@ -586,8 +639,6 @@ class DirectAgent:
         
         # Pattern: "I meant X" or "no, X" or "actually X"
         if any(phrase in goal_lower for phrase in ["i meant", "no,", "actually", "i said"]):
-            import re
-            
             # Extract what they meant
             match = re.search(r"(?:i meant|no,?\s+|actually\s+|i said\s+)(.+?)(?:\.|$)", goal_lower)
             if match:

@@ -29,8 +29,12 @@ Example workflow (Chrome + Search + Save):
 
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
+from pathlib import Path
+from datetime import datetime
 import json
 import time
+import re
+import ast
 
 
 @dataclass
@@ -55,6 +59,8 @@ class ExecutionContext:
     completion_reason: Optional[str] = None
     max_steps: int = 10
     current_step: int = 0
+    forced_stop: bool = False
+    state_snapshot: str = ""
 
 
 class MultiStepRunner:
@@ -127,11 +133,15 @@ class MultiStepRunner:
             for result in step_results:
                 context.executed_steps.append(result)
             
+            # Refresh runtime state snapshot for the continuation prompt
+            self._update_state_snapshot(context)
+            
             # Check if we should continue
-            should_continue, next_plan, reasoning = self._should_continue(
+            should_continue, next_plan, reasoning, forced_stop = self._should_continue(
                 goal,
                 context.executed_steps,
-                context.conversation_history
+                context.conversation_history,
+                context.state_snapshot
             )
             
             print(f"[MultiStepRunner] Continuation check: {should_continue}")
@@ -140,6 +150,8 @@ class MultiStepRunner:
             if not should_continue:
                 context.completed = True
                 context.completion_reason = reasoning
+                if forced_stop:
+                    context.forced_stop = True
                 break
             
             # Update plan for next iteration
@@ -153,6 +165,10 @@ class MultiStepRunner:
                 context.completed = True
                 context.completion_reason = "No further actions needed"
                 break
+        
+        if not context.completed and context.current_step >= context.max_steps:
+            context.completion_reason = f"Stopped after reaching the step limit of {context.max_steps}."
+            context.forced_stop = True
         
         # Generate final response
         final_response = self._generate_final_response(goal, context)
@@ -227,8 +243,9 @@ class MultiStepRunner:
         self,
         goal: str,
         executed_steps: List[StepResult],
-        conversation_history: List[Dict[str, str]]
-    ) -> Tuple[bool, Optional[List[Dict[str, Any]]], str]:
+        conversation_history: List[Dict[str, str]],
+        state_snapshot: str
+    ) -> Tuple[bool, Optional[List[Dict[str, Any]]], str, bool]:
         """
         Determine if we should continue with more steps.
         
@@ -238,6 +255,9 @@ class MultiStepRunner:
         
         # Build context for the model
         step_summary = self._summarize_execution(executed_steps)
+        state_info = state_snapshot or "State information unavailable"
+        recent_steps = self._format_recent_steps(executed_steps)
+        conversation_text = self._format_conversation_history(conversation_history)
         
         # Create a continuation prompt
         prompt = f"""
@@ -245,8 +265,17 @@ You are Kayas, an intelligent assistant executing a multi-step task.
 
 Original goal: {goal}
 
-Execution so far:
+Conversation context:
+{conversation_text}
+
+Recent actions:
+{recent_steps}
+
+Execution trace (JSON):
 {step_summary}
+
+Current system state:
+{state_info}
 
 Analyze what has been done and decide:
 1. Is the goal complete/satisfied?
@@ -273,21 +302,13 @@ IMPORTANT:
         try:
             # Get model's continuation decision
             response = self.llm.generate(prompt, max_tokens=1000)
+            self._log_continuation_output(response)
             
             print(f"[MultiStepRunner] Model response: {response[:200]}...")
             
-            # Parse the response
-            try:
-                decision = json.loads(response)
-            except json.JSONDecodeError:
-                # Try to extract JSON from response
-                import re
-                json_match = re.search(r'\{.*\}', response, re.DOTALL)
-                if json_match:
-                    decision = json.loads(json_match.group())
-                else:
-                    # If we can't parse, assume we're done
-                    return False, None, "Could not parse model response; assuming task is complete"
+            decision = self._parse_continuation_response(response)
+            if decision is None:
+                return False, None, "Could not parse model response; stopping to avoid a loop", True
             
             completed = decision.get("completed", False)
             reasoning = decision.get("reasoning", "No reasoning provided")
@@ -295,41 +316,38 @@ IMPORTANT:
             
             # If completed or no next steps, we're done
             if completed or next_steps is None:
-                return False, None, reasoning
+                return False, None, reasoning, False
             
             # Otherwise, return the next plan
             if next_steps and len(next_steps) > 0:
-                return True, next_steps, reasoning
+                return True, next_steps, reasoning, False
             else:
-                return False, None, reasoning or "Task appears complete"
+                return False, None, reasoning or "Task appears complete", False
         
         except Exception as e:
             # If there's an error getting continuation, assume we're done
-            return False, None, f"Error checking continuation: {str(e)}"
+            return False, None, f"Error checking continuation: {str(e)}", True
     
     def _summarize_execution(self, executed_steps: List[StepResult]) -> str:
-        """Create a summary of what has been executed so far."""
-        summary_lines = []
-        
-        for step in executed_steps:
+        """Create a structured JSON summary of executed steps."""
+        if not executed_steps:
+            return json.dumps({"steps": []})
+        trace: List[Dict[str, Any]] = []
+        for step in executed_steps[-20:]:  # keep prompt compact
             action_name = step.action.get("tool", step.action.get("action", "unknown"))
-            status = "✓" if step.success else "✗"
-            
-            summary_lines.append(f"{status} Step {step.step_number}: {action_name}")
-            
-            if step.success and step.output:
-                # Add brief output summary
-                if isinstance(step.output, dict):
-                    if "response" in step.output:
-                        summary_lines.append(f"   Response: {step.output['response'][:100]}")
-                    elif "message" in step.output:
-                        summary_lines.append(f"   Message: {step.output['message'][:100]}")
-                    elif "result" in step.output:
-                        summary_lines.append(f"   Result: {step.output['result'][:100]}")
-            elif step.error:
-                summary_lines.append(f"   Error: {step.error[:100]}")
-        
-        return "\n".join(summary_lines)
+            entry: Dict[str, Any] = {
+                "step": step.step_number,
+                "tool": action_name,
+                "success": step.success,
+            }
+            if "args" in step.action:
+                entry["args"] = step.action["args"]
+            if step.error:
+                entry["error"] = self._shorten_output(step.error)
+            elif step.output:
+                entry["result"] = self._shorten_output(step.output)
+            trace.append(entry)
+        return json.dumps({"steps": trace}, indent=2, default=str)
     
     def _generate_final_response(self, goal: str, context: ExecutionContext) -> str:
         """Generate a natural language response about what was accomplished."""
@@ -341,18 +359,128 @@ IMPORTANT:
         total_count = len(context.executed_steps)
         
         if context.completed:
-            if success_count == total_count:
-                return f"Done! I completed your request: {goal}. {context.completion_reason}"
-            else:
+            if context.forced_stop:
+                reason = context.completion_reason or "an internal safety stop was triggered"
                 return (
-                    f"I mostly completed your request ({success_count}/{total_count} steps succeeded). "
-                    f"{context.completion_reason}"
+                    f"I had to stop working on '{goal}' after {context.current_step} step(s) because {reason}. "
+                    f"{success_count}/{total_count} actions succeeded."
+                )
+            if success_count == total_count:
+                return f"Done! I completed your request: {goal}. {context.completion_reason or ''}".strip()
+            return (
+                f"I mostly completed your request ({success_count}/{total_count} steps succeeded). "
+                f"{context.completion_reason or ''}".strip()
                 )
         else:
             return (
                 f"I worked on your request but hit the step limit ({context.max_steps} steps). "
                 f"I completed {success_count} actions so far. Would you like me to continue?"
             )
+        
+
+    def _shorten_output(self, output: Any, max_len: int = 200) -> str:
+        text = json.dumps(output, default=str) if isinstance(output, (dict, list)) else str(output)
+        text = text.replace("\n", " ")
+        return text[:max_len] + ("..." if len(text) > max_len else "")
+
+    def _format_recent_steps(self, executed_steps: List[StepResult], limit: int = 5) -> str:
+        if not executed_steps:
+            return "No steps executed yet."
+        lines: List[str] = []
+        for step in executed_steps[-limit:]:
+            tool = step.action.get("tool", step.action.get("action", "unknown"))
+            status = "succeeded" if step.success else "failed"
+            detail_source = step.error or step.output
+            detail = self._shorten_output(detail_source) if detail_source else "no output"
+            lines.append(f"Step {step.step_number}: {tool} {status} -> {detail}")
+        return "\n".join(lines)
+
+    def _format_conversation_history(
+        self,
+        conversation_history: List[Dict[str, str]],
+        limit: int = 6,
+    ) -> str:
+        if not conversation_history:
+            return "No prior conversation."
+        relevant = conversation_history[-limit:]
+        formatted = [
+            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
+            for msg in relevant
+        ]
+        return "\n".join(formatted)
+
+    def _update_state_snapshot(self, context: ExecutionContext) -> None:
+        process_summary = "Process information unavailable"
+        try:
+            state = self.router.route({"tool": "process.list_processes", "args": {}})
+            if isinstance(state, dict) and state.get("success") and state.get("processes"):
+                names = [proc.get("name", "unknown") for proc in state.get("processes", [])[:8]]
+                process_summary = f"Running processes: {', '.join(names)}"
+            else:
+                process_summary = "Process information unavailable"
+        except Exception as exc:
+            process_summary = f"Process information unavailable ({exc})"
+
+        last_action_summary = "No actions have been executed yet."
+        if context.executed_steps:
+            last_step = context.executed_steps[-1]
+            tool = last_step.action.get("tool", last_step.action.get("action", "unknown"))
+            status = "succeeded" if last_step.success else "failed"
+            detail_source = last_step.error or last_step.output
+            detail = self._shorten_output(detail_source) if detail_source else "no output"
+            last_action_summary = (
+                f"Last action step {last_step.step_number} via {tool} {status}: {detail}"
+            )
+
+        context.state_snapshot = f"{process_summary}\n{last_action_summary}"
+
+    def _log_continuation_output(self, response: str) -> None:
+        try:
+            log_path = Path("logs") / "continuations.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.utcnow().isoformat()
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"[{timestamp}] {response}\n\n")
+        except Exception:
+            pass
+
+    def _parse_continuation_response(self, response: str) -> Optional[Dict[str, Any]]:
+        cleaned = response.replace("```json", "").replace("```", "").strip()
+        candidate = self._extract_json_block(cleaned)
+        candidates = [c for c in (candidate, cleaned) if c]
+        for cand in candidates:
+            cand = cand.strip()
+            # Remove trailing commas before object/array endings
+            cand = re.sub(r",\s*([}\]])", r"\1", cand)
+            try:
+                return json.loads(cand)
+            except json.JSONDecodeError:
+                pass
+            py_ready = re.sub(r"\btrue\b", "True", cand, flags=re.IGNORECASE)
+            py_ready = re.sub(r"\bfalse\b", "False", py_ready, flags=re.IGNORECASE)
+            py_ready = re.sub(r"\bnull\b", "None", py_ready, flags=re.IGNORECASE)
+            try:
+                parsed = ast.literal_eval(py_ready)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                continue
+        return None
+
+    def _extract_json_block(self, text: str) -> Optional[str]:
+        start = None
+        depth = 0
+        for idx, char in enumerate(text):
+            if char == '{':
+                if depth == 0:
+                    start = idx
+                depth += 1
+            elif char == '}':
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        return text[start:idx + 1]
+        return None
 
 
 # Example usage and testing

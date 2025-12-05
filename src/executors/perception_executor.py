@@ -42,13 +42,16 @@ class PerceptionExecutor:
             context: Additional context (window_title, app_type, control_type, etc.)
         
         Returns:
-            {"success": bool, "message": str, "method": str}
+            {"success": bool, "message": str, "method": str, "attempts": list, "error": Optional[str]}
         """
         if not self.available or not self.engine:
             return {
                 "success": False,
                 "message": "PerceptionEngine not available",
-                "method": "none"
+                "method": "none",
+                "attempts": [],
+                "error": "engine_unavailable",
+                "elapsed": None,
             }
         
         context = context or {}
@@ -57,13 +60,19 @@ class PerceptionExecutor:
             return {
                 "success": result.get("success", False),
                 "message": result.get("message", "Click completed"),
-                "method": result.get("method", "unknown")
+                "method": result.get("method", "unknown"),
+                "attempts": result.get("attempts", []),
+                "error": result.get("error"),
+                "elapsed": result.get("elapsed"),
             }
         except Exception as e:
             return {
                 "success": False,
                 "message": f"Error: {str(e)[:100]}",
-                "method": "error"
+                "method": "error",
+                "attempts": [],
+                "error": str(e),
+                "elapsed": None,
             }
     
     def smart_type(self, text: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
