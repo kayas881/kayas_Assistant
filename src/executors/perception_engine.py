@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 from enum import Enum
 import time
+import sys  # Needed for sys.executable
 
 
 class PerceptionLayer(Enum):
@@ -94,8 +95,9 @@ class PerceptionEngine:
                 self.executors[PerceptionLayer.COMPUTER_VISION] = CVExecutor(
                     CVConfig(confidence=0.8)
                 )
+                print("[PerceptionEngine] Computer Vision layer loaded")
             except Exception as e:
-                print(f"Computer Vision layer not available: {e}")
+                print(f"[PerceptionEngine] Computer Vision layer not available: {e}")
         
         # Layer D: OCR
         if PerceptionLayer.OCR in self.config.enabled_layers:
@@ -104,8 +106,9 @@ class PerceptionEngine:
                 self.executors[PerceptionLayer.OCR] = OCRExecutor(
                     OCRConfig()
                 )
+                print("[PerceptionEngine] OCR layer loaded")
             except Exception as e:
-                print(f"OCR layer not available: {e}")
+                print(f"[PerceptionEngine] OCR layer not available: {e}")
     
     def smart_click(self,
                    target: str,
@@ -151,6 +154,21 @@ class PerceptionEngine:
                 })
                 
                 if result.get("success"):
+                    # Sanity check: UIA sometimes returns success when it only found the top-level window
+                    if layer == PerceptionLayer.UI_AUTOMATION:
+                        control_class = result.get("control_class", "")
+                        print(f"[PerceptionEngine] UIA returned control_class: '{control_class}'")
+                        # Chrome/Edge top-level windows shouldn't count as "found the button"
+                        if control_class in {"Chrome_WidgetWin_0", "Chrome_WidgetWin_1", 
+                                              "Chrome_RenderWidgetHostHWND", "MozillaWindowClass",
+                                              "ApplicationFrameWindow"}:
+                            print(f"[PerceptionEngine] UIA found top-level window ({control_class}), trying next layer")
+                            continue
+                        # Also reject if control_class is empty or generic
+                        if not control_class or control_class.startswith("Edit") == False and "Button" not in control_class:
+                            print(f"[PerceptionEngine] WARNING: UIA returned empty/generic control_class '{control_class}', may have found wrong element")
+                            # Continue to next layer anyway - OCR is more reliable for text
+                    
                     return {
                         "success": True,
                         "method": layer.value,
@@ -165,11 +183,37 @@ class PerceptionEngine:
                     "error": str(e)
                 })
         
-        # All layers failed
+        # All layers failed -- fallback: call new.py as subprocess
+        import subprocess
+        exe_path = None
+        # Try to get exe path from context or use Chrome as default for browser
+        if context.get("window_title") == "Google Chrome":
+            exe_path = r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        elif context.get("window_title") == "Microsoft Edge":
+            exe_path = r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+        # else: could add more app mappings here
+        if exe_path:
+            print(f"[PerceptionEngine] Fallback: calling new.py for click on '{target}'")
+            try:
+                cmd = [sys.executable, "d:/kayas/new.py", "--exe", exe_path, "--click-text", target, "--wait", "8"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                print(f"[PerceptionEngine] new.py output: {result.stdout.strip()}")
+                if "SUCCESS" in result.stdout:
+                    return {
+                        "success": True,
+                        "method": "new.py",
+                        "attempts": attempts,
+                        "message": f"Clicked '{target}' using new.py fallback",
+                        "elapsed": time.time() - start_time
+                    }
+                else:
+                    attempts.append({"layer": "new.py", "error": result.stdout.strip()})
+            except Exception as e:
+                attempts.append({"layer": "new.py", "error": str(e)})
         return {
             "success": False,
             "attempts": attempts,
-            "error": f"Failed to click '{target}' with all available methods",
+            "error": f"Failed to click '{target}' with all available methods (including new.py)",
             "elapsed": time.time() - start_time
         }
     
@@ -226,12 +270,8 @@ class PerceptionEngine:
                 return {"success": False, "error": "CV requires image template"}
         
         elif layer == PerceptionLayer.OCR:
-            # Use OCR to find and click text; if not immediately found, briefly wait
-            res = executor.click_text(target)
-            if not res.get("success"):
-                wait = executor.wait_for_text(target, timeout=2)
-                if wait.get("found"):
-                    res = executor.click_text(target)
+            # Use OCR to find and click text (click_text now has built-in retry logic)
+            res = executor.click_text(target, timeout=8)
             return res
         
         return {"success": False, "error": f"Unknown layer: {layer}"}

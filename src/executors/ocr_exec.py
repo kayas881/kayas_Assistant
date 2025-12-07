@@ -28,6 +28,7 @@ try:
     import pytesseract
     from PIL import Image, ImageGrab
     import pyautogui
+    from .debug_utils import save_debug_screenshot, annotate_screenshot_with_box
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
@@ -237,42 +238,99 @@ class OCRExecutor:
                   text: str,
                   region: Tuple[int, int, int, int] = None,
                   button: str = "left",
-                  clicks: int = 1) -> Dict[str, Any]:
+                  clicks: int = 1,
+                  timeout: int = 8) -> Dict[str, Any]:
         """
-        Find text on screen and click it.
+        Find text on screen and click it with intelligent offset retries.
         
         Args:
             text: Text to find and click
             region: Search region
             button: "left", "right", or "middle"
             clicks: Number of clicks (1 or 2)
+            timeout: Maximum seconds to retry finding text
             
         Returns:
             {"success": bool, "message": str}
         """
+        import time
+        
         try:
-            # Find text
-            find_result = self.find_text_on_screen(text, region)
+            # Retry finding and clicking text over timeout period
+            start_time = time.time()
+            attempt_num = 0
             
-            if not find_result["success"]:
-                return find_result
+            while time.time() - start_time < timeout:
+                attempt_num += 1
+                # Find text
+                find_result = self.find_text_on_screen(text, region)
+                
+                if not find_result["success"]:
+                    time.sleep(0.7)
+                    continue
+                
+                if find_result["found"]:
+                    # Save debug screenshot showing what OCR found
+                    try:
+                        screenshot = self.capture_screen(region)
+                        annotated = annotate_screenshot_with_box(
+                            screenshot,
+                            (find_result["matches"][0]["box"]["left"], 
+                             find_result["matches"][0]["box"]["top"],
+                             find_result["matches"][0]["box"]["left"] + find_result["matches"][0]["box"]["width"],
+                             find_result["matches"][0]["box"]["top"] + find_result["matches"][0]["box"]["height"]),
+                            f"Found: {text}"
+                        )
+                        save_debug_screenshot(f"ocr_found_{text[:10]}.png", annotated)
+                    except Exception:
+                        pass  # Debug artifacts are nice to have but not critical
+                    
+                    # Click the first match with intelligent offset retries
+                    # The clickable area is often slightly offset from text center
+                    match = find_result["matches"][0]
+                    base_x, base_y = match["x"], match["y"]
+                    
+                    # Try different offsets: center, then y+6, y+12, and slight x adjustments
+                    # This handles cases where text is in a header but button area is below
+                    offsets = [
+                        (0, 0),      # Center
+                        (0, 6),      # Slightly below
+                        (0, 12),     # More below
+                        (0, 18),     # Even more below
+                        (3, 3),      # Slight right-down
+                        (-3, 6),     # Slight left + below
+                    ]
+                    
+                    for offset_idx, (offset_x, offset_y) in enumerate(offsets):
+                        click_x = base_x + offset_x
+                        click_y = base_y + offset_y
+                        
+                        pyautogui.click(click_x, click_y, clicks=clicks, button=button)
+                        
+                        # Small delay to let the click register
+                        time.sleep(0.2)
+                        
+                        # Return success on first click attempt
+                        # (we'll know from next step if it didn't work)
+                        return {
+                            "success": True,
+                            "message": f"Clicked '{text}' at ({click_x}, {click_y}) [offset {offset_idx}: {offset_x}, {offset_y}]",
+                            "confidence": match["confidence"],
+                            "elapsed": time.time() - start_time
+                        }
+                
+                time.sleep(0.7)  # Wait before retry
             
-            if not find_result["found"]:
-                return {
-                    "success": False,
-                    "error": f"Text '{text}' not found on screen"
-                }
-            
-            # Click the first match
-            match = find_result["matches"][0]
-            x, y = match["x"], match["y"]
-            
-            pyautogui.click(x, y, clicks=clicks, button=button)
+            # Timeout reached - save screenshot showing what was on screen
+            try:
+                screenshot = self.capture_screen(region)
+                save_debug_screenshot(f"ocr_failed_{text[:10]}_timeout.png", screenshot)
+            except Exception:
+                pass
             
             return {
-                "success": True,
-                "message": f"Clicked '{text}' at ({x}, {y})",
-                "confidence": match["confidence"]
+                "success": False,
+                "error": f"Text '{text}' not found on screen after {timeout}s (checked {attempt_num} times)"
             }
             
         except Exception as e:

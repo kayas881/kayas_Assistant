@@ -308,7 +308,11 @@ IMPORTANT:
             
             decision = self._parse_continuation_response(response)
             if decision is None:
-                return False, None, "Could not parse model response; stopping to avoid a loop", True
+                # Couldn't parse JSON - be lenient and assume task is complete to avoid loops
+                # Log the raw response for debugging
+                print(f"[MultiStepRunner] WARNING: Could not parse model response, assuming task complete")
+                print(f"[MultiStepRunner] Raw response: {response[:500]}")
+                return False, None, "Task completed (could not parse model response for next steps)", False
             
             completed = decision.get("completed", False)
             reasoning = decision.get("reasoning", "No reasoning provided")

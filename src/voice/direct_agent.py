@@ -322,6 +322,7 @@ class DirectAgent:
             
             # Add heuristic handling for common requests before calling LLM
             goal_lower = goal.lower()
+            print(f"DEBUG: Processing goal: '{goal}'")
             heuristic_plan = None
 
             wait_ms: Optional[int] = None
@@ -330,15 +331,15 @@ class DirectAgent:
                 wait_ms = max(1000, min(30000, int(wait_match.group(1)) * 1000))
 
             selection_match = re.search(
-                r"(?:select|click on|find)\s+(?:the\s+)?['\"]?([^'\"\n]+)['\"]?(?:\s+(?:account|button|profile|option|menu))?",
+                r"(?:select|click\s+(?:on\s+)?|find)\s+(?:the\s+)?['\"]?([^'\"\n]+)['\"]?(?:\s+(?:account|button|profile|option|menu))?",
                 goal,
                 re.IGNORECASE,
             )
             selection_target = selection_match.group(1).strip(" '\"") if selection_match else None
-            selection_window = None
+            print(f"DEBUG: selection_match = {selection_match}, selection_target = {selection_target}")
             if selection_target:
                 if "chrome" in goal_lower:
-                    selection_window = "Chrome"
+                    selection_window = "Google Chrome"
                 elif "edge" in goal_lower:
                     selection_window = "Microsoft Edge"
                 elif "whatsapp" in goal_lower:
@@ -502,7 +503,13 @@ class DirectAgent:
                         )
                         for action in heuristic_plan
                     )
-                    wait_duration = wait_ms or (5000 if requires_launch else None)
+                    # For Chrome/Edge profile selection, minimum 8 seconds needed
+                    # (profile picker takes time to load)
+                    if selection_window in {"Google Chrome", "Microsoft Edge"} and selection_target:
+                        wait_duration = max(wait_ms or 0, 8000)
+                    else:
+                        wait_duration = wait_ms or (5000 if requires_launch else None)
+                    
                     if wait_duration and not has_sleep:
                         heuristic_plan.append({
                             "tool": "desktop.run_steps",

@@ -187,16 +187,7 @@ class UIAutomationExecutor:
                     button_id: str = None,
                     button_class: str = None) -> Dict[str, Any]:
         """
-        Click a button in a window.
-        
-        Args:
-            window_title: Title of the window
-            button_text: Text on the button
-            button_id: Automation ID of the button
-            button_class: Class name of the button
-            
-        Returns:
-            {"success": bool, "message": str}
+        Click a button in a window using PHYSICAL input.
         """
         try:
             # Find window
@@ -205,6 +196,26 @@ class UIAutomationExecutor:
                 return window_result
             
             window = window_result["window"]
+            
+            # Restore window if minimized so we can physically click
+            if window.get_show_state() == 2: # Minimized
+                window.restore()
+            
+            # Robust window focus: try pywinauto first, fall back to Win32 API
+            try:
+                window.set_focus()
+            except Exception as e:
+                # Fallback to Win32 API for stubborn windows (e.g., Chrome)
+                try:
+                    import ctypes
+                    hwnd = window.handle
+                    # ShowWindow(hwnd, SW_RESTORE=9)
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)
+                    # SetForegroundWindow
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+                except Exception as fallback_err:
+                    # If both fail, log but continue - click might still work
+                    print(f"[UIA] Warning: Could not focus window: {fallback_err}")
             
             # Find button
             button_kwargs = {}
@@ -217,11 +228,17 @@ class UIAutomationExecutor:
             
             button = window.child_window(**button_kwargs)
             button.wait("enabled", timeout=self.config.timeout)
-            button.click()
+            
+            # --- THE FIX: Use click_input() instead of click() ---
+            # This moves the actual mouse cursor and physically clicks.
+            button.click_input()
+            # -----------------------------------------------------
             
             return {
                 "success": True,
-                "message": f"Clicked button '{button_text or button_id}' in '{window_title}'"
+                "message": f"Clicked button '{button_text or button_id}' in '{window_title}'",
+                "control_class": button.class_name(),
+                "control_rect": button.rectangle()
             }
             
         except ElementNotFoundError:
