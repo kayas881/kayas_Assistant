@@ -282,6 +282,19 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
                 print(f"[Planner] Using send document heuristic -> {contact}, path: {file_path}")
                 return heuristic, raw, prompt
 
+        # Reply heuristic (even without "whatsapp" keyword)
+        # Pattern: "reply to <contact> saying <message>"
+        if "reply" in g:
+            contact_match = re.search(r"(?:reply\s+)?(?:to|in)\s+([A-Za-z][A-Za-z\s]+?)(?:\s+saying|\s+with|\s+that|$)", goal, re.IGNORECASE)
+            contact = contact_match.group(1).strip() if contact_match else ""
+            msg_match = re.search(r"(?:saying|with|that)\s*\"?(.+?)\"?\s*$", goal, re.IGNORECASE)
+            reply_text = msg_match.group(1).strip() if msg_match else "Ok"
+            if contact:
+                heuristic = [{"tool": "whatsapp.reply_to_message", "args": {"contact": contact, "reply_text": reply_text}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using WhatsApp reply heuristic -> {contact}: {reply_text}")
+                return heuristic, raw, prompt
+
         # WhatsApp heuristics
         if "whatsapp" in g:
             # Send message via WhatsApp

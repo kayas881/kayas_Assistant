@@ -106,12 +106,33 @@ class Selectors:
     CHAT_INFO_BUTTON = 'div[data-testid="conversation-header"]'
     
     # Context menu (right-click on message)
-    CONTEXT_MENU = 'div[data-testid="context-menu"]'
-    MENU_REPLY = 'div[data-testid="mi-reply"]'
-    MENU_FORWARD = 'div[data-testid="mi-forward"]'
-    MENU_DELETE = 'div[data-testid="mi-delete"]'
-    MENU_STAR = 'div[data-testid="mi-star"]'
-    MENU_INFO = 'div[data-testid="mi-msg-info"]'
+    CONTEXT_MENU = 'div[data-testid="context-menu"], ul[role="menu"], div[role="menu"]'
+    MENU_REPLY = (
+        'div[data-testid="mi-reply"], '
+        'li[data-testid="mi-reply"], '
+        'div[aria-label="Reply"], '
+        'li[aria-label="Reply"], '
+        'span[data-icon="reply"]'
+    )
+    MENU_FORWARD = (
+        'div[data-testid="mi-forward"], '
+        'li[data-testid="mi-forward"], '
+        'div[aria-label="Forward"], '
+        'span[data-icon="forward"]'
+    )
+    MENU_DELETE = (
+        'div[data-testid="mi-delete"], '
+        'li[data-testid="mi-delete"], '
+        'div[aria-label="Delete"], '
+        'span[data-icon="delete"]'
+    )
+    MENU_STAR = (
+        'div[data-testid="mi-star"], '
+        'li[data-testid="mi-star"], '
+        'div[aria-label="Star"], '
+        'span[data-icon="star"]'
+    )
+    MENU_INFO = 'div[data-testid="mi-msg-info"], li[data-testid="mi-msg-info"]'
     
     # Chat options (three dots menu)
     CHAT_MENU = 'div[data-testid="menu"], span[data-icon="menu"]'
@@ -1730,36 +1751,258 @@ class WhatsAppExecutor:
             return {"success": False, "error": f"Contact '{contact}' not found"}
         
         try:
-            time.sleep(1)
+            time.sleep(1.5)
             
-            # Get messages
-            messages = self._page.query_selector_all(Selectors.MESSAGE_ROW)
-            if not messages:
-                messages = self._page.query_selector_all(f'{Selectors.MESSAGE_IN}, {Selectors.MESSAGE_OUT}')
+            # Get the message list container first
+            # WhatsApp has message bubbles inside divs with class message-in or message-out
+            # The dropdown arrow appears on hover inside each message bubble
+            
+            # Try multiple selectors for messages
+            messages = []
+            
+            # Try: div[data-testid="msg-container"] - container for each message
+            messages = self._page.query_selector_all('div[data-testid="msg-container"]')
+            print(f"[WhatsApp] Found {len(messages)} msg-container elements")
+            
+            if not messages or len(messages) == 0:
+                # Try: message-in and message-out classes
+                messages = self._page.query_selector_all('div.message-in, div.message-out')
+                print(f"[WhatsApp] Found {len(messages)} message-in/out elements")
+            
+            if not messages or len(messages) == 0:
+                # Try: rows in the message list
+                messages = self._page.query_selector_all('div[role="row"]')
+                print(f"[WhatsApp] Found {len(messages)} role=row elements")
             
             if not messages or len(messages) <= message_index:
-                return {"success": False, "error": "Message not found"}
+                return {"success": False, "error": f"Message not found. Found {len(messages) if messages else 0} messages."}
             
-            # Select the message (from end)
+            # Select the message (from end, 0 = most recent)
             target_msg = messages[-(message_index + 1)]
+            print(f"[WhatsApp] Targeting message at index -{message_index + 1}")
             
-            # Hover and click dropdown
-            target_msg.hover()
-            time.sleep(0.3)
+            # Scroll the message into view and hover to reveal dropdown
+            target_msg.scroll_into_view_if_needed()
+            time.sleep(0.5)
             
-            # Click the dropdown arrow
-            dropdown = target_msg.query_selector('span[data-icon="down-context"]')
+            # Get the bounding box of the message for precise hovering
+            box = target_msg.bounding_box()
+            if box:
+                # Hover in the middle-right area where the dropdown appears
+                hover_x = box['x'] + box['width'] - 30  # Right side
+                hover_y = box['y'] + box['height'] / 2   # Middle
+                self._page.mouse.move(hover_x, hover_y)
+                print(f"[WhatsApp] Hovering at ({hover_x}, {hover_y})")
+            else:
+                target_msg.hover()
+            
+            time.sleep(0.8)  # Wait for dropdown to appear
+            
+            # Take screenshot to see what appeared
+            self._page.screenshot(path="debug_screens/after_hover.png")
+            
+            # Look for the dropdown arrow - it should now be visible
+            # The arrow appears as a small button/span with down arrow icon
+            dropdown = None
+            
+            # First try inside the message
+            dropdown_selectors = [
+                'span[data-icon="down-context"]',
+                'span[data-icon="chevron"]', 
+                'span[data-icon="chevron-down-alt"]',
+                'span[data-icon="down"]',
+                'span[data-icon="caret-down"]',
+                'span[data-testid="down-context"]',
+                'span[data-testid="icon-down-context"]',
+                'button span[data-icon]',
+                '[role="button"] span[data-icon]',
+            ]
+            
+            for sel in dropdown_selectors:
+                dropdown = target_msg.query_selector(sel)
+                if dropdown and dropdown.is_visible():
+                    print(f"[WhatsApp] Found dropdown inside message: {sel}")
+                    break
+                dropdown = None
+            
+            # Also check for dropdown that might be positioned near but outside message div
+            # (WhatsApp sometimes renders it in a floating layer)
+            if not dropdown:
+                # Look for any visible down-arrow icon on the page that appeared after hover
+                all_icons = self._page.query_selector_all('span[data-icon]')
+                for icon in all_icons:
+                    try:
+                        icon_name = icon.get_attribute('data-icon')
+                        if icon_name and 'down' in icon_name.lower() and icon.is_visible():
+                            # Check if it's near our message
+                            icon_box = icon.bounding_box()
+                            if icon_box and box:
+                                # Should be within reasonable distance of our message
+                                if abs(icon_box['y'] - box['y']) < 100:
+                                    dropdown = icon
+                                    print(f"[WhatsApp] Found nearby dropdown icon: {icon_name}")
+                                    break
+                    except:
+                        pass
+            
             if dropdown:
                 dropdown.click()
+                print("[WhatsApp] Clicked dropdown arrow")
+                time.sleep(0.5)
+                reply_mode_active = False  # Need to find and click Reply button
             else:
-                target_msg.click(button="right")
+                # Alternative: Try keyboard shortcut or double-click
+                print("[WhatsApp] No dropdown found, trying alternative methods")
+                
+                # Method 1: Double-click sometimes opens reply
+                target_msg.dblclick()
+                time.sleep(0.8)
+                
+                # Check if reply mode is active (quoted message appears above input)
+                # Try multiple selectors for the quote preview
+                reply_preview_selectors = [
+                    'div[data-testid="quoted-message-preview"]',
+                    'div[data-testid="reply-preview"]', 
+                    'div[data-testid="quoted-message"]',
+                    'div[data-testid="compose-quote"]',
+                    'span[data-testid="quoted-message"]',
+                    # Also look for the X button to cancel reply (indicates reply mode)
+                    'span[data-icon="x-light"]',
+                    'span[data-icon="x"]',
+                    'button[aria-label="Cancel reply"]',
+                ]
+                
+                reply_preview = None
+                for sel in reply_preview_selectors:
+                    reply_preview = self._page.query_selector(sel)
+                    if reply_preview and reply_preview.is_visible():
+                        print(f"[WhatsApp] Found reply preview with: {sel}")
+                        break
+                    reply_preview = None
+                
+                if reply_preview:
+                    print("[WhatsApp] Double-click activated reply mode!")
+                    reply_mode_active = True
+                else:
+                    # Even if we can't find the preview, still try to type
+                    # The double-click might have worked
+                    print("[WhatsApp] Reply preview not detected, but trying to type anyway...")
+                    reply_mode_active = True  # Assume it worked, try typing
+                    
+                    # Take screenshot for debugging
+                    self._page.screenshot(path="debug_screens/after_dblclick.png")
+                    
+                    # Log visible icons for debugging
+                    all_icons = self._page.query_selector_all('span[data-icon]')
+                    visible_icons = []
+                    for icon in all_icons:
+                        try:
+                            if icon.is_visible():
+                                visible_icons.append(icon.get_attribute('data-icon'))
+                        except:
+                            pass
+                    print(f"[WhatsApp] Visible data-icons: {visible_icons[:20]}")
             
-            time.sleep(0.3)
+            time.sleep(0.5)
             
-            # Click reply
-            reply_btn = self._page.wait_for_selector(Selectors.MENU_REPLY, timeout=3000)
-            reply_btn.click()
-            time.sleep(0.3)
+            # Initialize reply_btn
+            reply_btn = None
+            
+            # If reply mode is already active from double-click, skip to typing
+            if reply_mode_active:
+                print("[WhatsApp] Reply mode active, skipping menu search - going directly to type message")
+            else:
+                # Take a screenshot to see what menu appeared
+                self._page.screenshot(path="debug_screens/reply_menu_before.png")
+                
+                # Now look for the Reply option in the context menu
+                
+                # Strategy 0: Direct selector for WhatsApp's Reply span (from user inspection)
+                # The Reply button is: <span class="x1o2sk6j x6prxxf...">Reply</span>
+                try:
+                    # Look for span containing exactly "Reply"
+                    reply_spans = self._page.query_selector_all('span')
+                    for span in reply_spans:
+                        try:
+                            if span.is_visible() and span.inner_text().strip() == "Reply":
+                                reply_btn = span
+                                print("[WhatsApp] Found Reply span by exact text!")
+                                break
+                        except:
+                            pass
+                except Exception as e:
+                    print(f"[WhatsApp] Span search error: {e}")
+                
+                # Strategy 1: Look in menu container
+                if not reply_btn:
+                    menu_container = self._page.query_selector('div[data-testid="popup-contents"], ul[role="menu"], div[role="menu"], div[role="listbox"]')
+                    if menu_container:
+                        print(f"[WhatsApp] Found menu container")
+                        menu_items = menu_container.query_selector_all('div[role="button"], li, div[tabindex], span')
+                        print(f"[WhatsApp] Found {len(menu_items)} items in menu")
+                        for i, item in enumerate(menu_items[:10]):
+                            try:
+                                text = item.inner_text().strip()
+                                if text:
+                                    print(f"[WhatsApp] Menu item {i}: '{text}'")
+                                    if "reply" in text.lower():
+                                        reply_btn = item
+                                        print(f"[WhatsApp] Found Reply in menu!")
+                                        break
+                            except:
+                                pass
+                
+                # Strategy 2: Look for menu items by data-testid
+                if not reply_btn:
+                    reply_selectors = [
+                        'div[data-testid="mi-reply"]',
+                        'li[data-testid="mi-reply"]',
+                        '[data-testid="popup-contents"] div:has-text("Reply")',
+                        'div[role="button"]:has-text("Reply")',
+                        'li:has-text("Reply")',
+                    ]
+                    for sel in reply_selectors:
+                        try:
+                            elem = self._page.query_selector(sel)
+                            if elem and elem.is_visible():
+                                reply_btn = elem
+                                print(f"[WhatsApp] Found Reply with selector: {sel}")
+                                break
+                        except:
+                            pass
+                
+                # Strategy 3: Find by text content anywhere visible
+                if not reply_btn:
+                    try:
+                        all_visible = self._page.query_selector_all('div, span, li')
+                        for elem in all_visible:
+                            try:
+                                if elem.is_visible():
+                                    text = elem.inner_text()
+                                    if text and text.strip() == "Reply":
+                                        box = elem.bounding_box()
+                                        if box and box['width'] > 20 and box['height'] > 15:
+                                            reply_btn = elem
+                                            print("[WhatsApp] Found Reply by exact text match")
+                                            break
+                            except:
+                                pass
+                    except Exception as e:
+                        print(f"[WhatsApp] Text search failed: {e}")
+                
+                # If we found a reply button, click it
+                if reply_btn:
+                    reply_btn.click()
+                    print("[WhatsApp] Clicked Reply")
+                    time.sleep(0.5)
+                else:
+                    # Check if reply mode got activated somehow
+                    reply_preview = self._page.query_selector('div[data-testid="quoted-message"], div._aju8')
+                    if reply_preview and reply_preview.is_visible():
+                        print("[WhatsApp] Reply mode already active!")
+                    else:
+                        self._page.screenshot(path="debug_screens/reply_menu_debug.png")
+                        return {"success": False, "error": "Could not find Reply option in menu. Screenshot saved."}
             
             # Type reply
             if not self._type_message(reply_text):
@@ -1779,6 +2022,8 @@ class WhatsAppExecutor:
             }
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {"success": False, "error": str(e)}
     
     def delete_message(self, contact: str, message_index: int = 0, for_everyone: bool = True) -> Dict[str, Any]:
