@@ -107,6 +107,64 @@ class Router:
                     "args": a,
                 }
         try:
+            # Smart defaults: deterministic launchers that bypass perception
+            if t == "browser.open_chrome_profile":
+                profile = a.get("profile_name", "Default")
+                chrome_exe = a.get("chrome_path", "chrome.exe")
+                # Chrome expects the profile directory name (e.g., "Default", "Profile 1")
+                chrome_args = [f"--profile-directory={profile}"]
+                return self.executors["process"].start_program(
+                    program=chrome_exe,
+                    args=chrome_args,
+                    background=a.get("background", True),
+                )
+
+            if t == "app.open_spotify":
+                spotify_exe = a.get("path", "spotify.exe")
+                flags = a.get("flags", ["--minimized"])
+                flags_list = flags if isinstance(flags, list) else [str(flags)]
+                return self.executors["process"].start_program(
+                    program=spotify_exe,
+                    args=flags_list,
+                    background=a.get("background", True),
+                )
+
+            if t == "messaging.send_to_contact":
+                contact = a.get("name") or a.get("contact")
+                message = a.get("message", "")
+
+                # Prefer native messaging APIs if available (e.g., Slack executor)
+                slack_exec = self.executors.get("slack")
+                if slack_exec and contact:
+                    channel = contact if contact.startswith(("#", "@")) else f"@{contact}"
+                    try:
+                        return slack_exec.send_message(channel=channel, text=message)
+                    except Exception as exc:
+                        last_error = str(exc)
+                else:
+                    last_error = "no messaging API configured"
+
+                # Fallback: Playwright automation to a web messenger
+                browser_exec = self.executors.get("browser")
+                if browser_exec:
+                    web_url = a.get("web_url", "https://web.whatsapp.com")
+                    steps = [
+                        {"action": "goto", "args": {"url": web_url}},
+                        {"action": "wait", "args": {"ms": 2000}},
+                        {"action": "fill", "args": {"selector": "input[type='text'],input[aria-label*='Search']", "text": contact or ""}},
+                        {"action": "press", "args": {"selector": "input[type='text'],input[aria-label*='Search']", "key": "Enter"}},
+                        {"action": "wait", "args": {"ms": 800}},
+                        {"action": "fill", "args": {"selector": "div[contenteditable='true'],textarea", "text": message}},
+                        {"action": "press", "args": {"selector": "div[contenteditable='true'],textarea", "key": "Enter"}},
+                    ]
+                    return browser_exec.run_steps(
+                        steps=steps,
+                        headless=a.get("headless", False),
+                        stop_on_error=a.get("stop_on_error", True),
+                    )
+
+                return {"success": False, "error": f"Messaging not available; last_error={last_error}"}
+
             if t == "filesystem.create_file":
                 return self.executors["fs"].create_file(a.get("filename", "notes.txt"), a.get("content", ""))
             if t == "filesystem.append_file":
@@ -544,6 +602,160 @@ class Router:
                     filename=a["filename"],
                     region=a.get("region")
                 )
+            # WhatsApp Web automation
+            if t.startswith("whatsapp."):
+                wa = self.executors.get("whatsapp")
+                if not wa:
+                    return {"error": "WhatsApp executor not available. Make sure Playwright is installed.", "tool": t}
+                if t == "whatsapp.initialize":
+                    return wa.initialize()
+                if t == "whatsapp.send_message":
+                    return wa.send_message(
+                        contact=a["contact"],
+                        message=a["message"]
+                    )
+                if t == "whatsapp.read_messages":
+                    return wa.read_messages(
+                        contact=a["contact"],
+                        limit=a.get("limit", 10)
+                    )
+                if t == "whatsapp.get_unread_chats":
+                    return wa.get_unread_chats()
+                if t == "whatsapp.send_image":
+                    return wa.send_image(
+                        contact=a["contact"],
+                        image_path=a["image_path"],
+                        caption=a.get("caption", "")
+                    )
+                if t == "whatsapp.send_video":
+                    return wa.send_video(
+                        contact=a["contact"],
+                        video_path=a["video_path"],
+                        caption=a.get("caption", "")
+                    )
+                if t == "whatsapp.send_document":
+                    return wa.send_document(
+                        contact=a["contact"],
+                        file_path=a["file_path"],
+                        caption=a.get("caption", "")
+                    )
+                if t == "whatsapp.get_all_chats":
+                    return wa.get_all_chats(
+                        limit=a.get("limit", 20)
+                    )
+                if t == "whatsapp.get_chat_info":
+                    return wa.get_chat_info(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.get_contact_info":
+                    return wa.get_contact_info(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.get_last_seen":
+                    return wa.get_last_seen(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.mark_as_read":
+                    return wa.mark_as_read(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.mute_chat":
+                    return wa.mute_chat(
+                        contact=a["contact"],
+                        duration=a.get("duration", "8 hours")
+                    )
+                if t == "whatsapp.unmute_chat":
+                    return wa.unmute_chat(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.archive_chat":
+                    return wa.archive_chat(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.pin_chat":
+                    return wa.pin_chat(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.unpin_chat":
+                    return wa.unpin_chat(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.clear_chat":
+                    return wa.clear_chat(
+                        contact=a["contact"],
+                        keep_starred=a.get("keep_starred", True)
+                    )
+                if t == "whatsapp.delete_chat":
+                    return wa.delete_chat(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.block_contact":
+                    return wa.block_contact(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.unblock_contact":
+                    return wa.unblock_contact(
+                        contact=a["contact"]
+                    )
+                if t == "whatsapp.forward_message":
+                    return wa.forward_message(
+                        from_contact=a["from_contact"],
+                        to_contact=a["to_contact"],
+                        message_index=a.get("message_index", 0)
+                    )
+                if t == "whatsapp.reply_to_message":
+                    return wa.reply_to_message(
+                        contact=a["contact"],
+                        reply_text=a["reply_text"],
+                        message_index=a.get("message_index", 0)
+                    )
+                if t == "whatsapp.delete_message":
+                    return wa.delete_message(
+                        contact=a["contact"],
+                        message_index=a.get("message_index", 0),
+                        for_everyone=a.get("for_everyone", True)
+                    )
+                if t == "whatsapp.star_message":
+                    return wa.star_message(
+                        contact=a["contact"],
+                        message_index=a.get("message_index", 0)
+                    )
+                if t == "whatsapp.search_messages":
+                    return wa.search_messages(
+                        query=a["query"],
+                        contact=a.get("contact")
+                    )
+                if t == "whatsapp.create_group":
+                    return wa.create_group(
+                        group_name=a["group_name"],
+                        members=a["members"]
+                    )
+                if t == "whatsapp.add_to_group":
+                    return wa.add_to_group(
+                        group_name=a["group_name"],
+                        members=a["members"]
+                    )
+                if t == "whatsapp.leave_group":
+                    return wa.leave_group(
+                        group_name=a["group_name"]
+                    )
+                if t == "whatsapp.send_location":
+                    return wa.send_location(
+                        contact=a["contact"],
+                        latitude=a.get("latitude"),
+                        longitude=a.get("longitude")
+                    )
+                if t == "whatsapp.send_contact":
+                    return wa.send_contact(
+                        to_contact=a["to_contact"],
+                        share_contact=a["share_contact"]
+                    )
+                if t == "whatsapp.screenshot":
+                    return wa.take_screenshot(
+                        filename=a.get("filename")
+                    )
+                if t == "whatsapp.close":
+                    return wa.close()
         except Exception as e:
             return {"error": str(e), "tool": t, "args": a}
         return {"error": f"Unknown tool: {t}", "args": a}

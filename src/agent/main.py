@@ -413,23 +413,96 @@ def run_agent(goal: str) -> Dict[str, str]:
             memory.log_action(run_id, name="filesystem.create_file", params={"filename": target_name}, result=create_res)
             last_path = create_res.get("path", str(target_path))
     else:
-        # No structured plan available; fall back to legacy step planner
-        steps = planner.plan(goal)
-        memory.log_message(run_id, "system", "\n".join(f"- {s}" for s in steps))
-        # Log legacy planner prompt/output for completeness
-        legacy_prompt = f"Goal: {goal}\nProduce 2-6 numbered steps."
-        memory.log_plan(run_id, ollama_model(), "legacy", legacy_prompt, "\n".join(steps))
-        for step in steps:
-            step_l = step.lower()
-            if reuse_artifact and ("create" in step_l or "write" in step_l or "append" in step_l):
-                # Skip redundant file operations when reusing an artifact
-                result = {"action": "reuse_artifact", "path": reuse_artifact, "skipped_step": step}
-                last_path = reuse_artifact
-                memory.log_action(run_id, name="reuse_artifact", params={"step": step}, result=result)
-                continue
-            result = fs.execute_step(step, goal=goal, default_filename=default_filename)
-            last_path = result.get("path", last_path)
-            memory.log_action(run_id, name=result.get("action", "unknown"), params={"step": step}, result=result)
+        # No structured plan available; attempt structured fallback instead of legacy text steps
+        fallback_calls, raw_fallback, used_prompt = plan_structured(planner.llm, goal, default_filename if reuse_artifact else None, feedback_hints=feedback_hints)
+        if fallback_calls:
+            memory.log_message(run_id, "system", f"Fallback structured plan: {raw_fallback}")
+            memory.log_plan(run_id, ollama_model(), "structured-fallback", used_prompt, raw_fallback)
+        else:
+            # Minimal deterministic fallback: create a notes file with the goal
+            fallback_calls = [{"tool": "filesystem.create_file", "args": {"filename": default_filename, "content": f"Goal: {goal}\n"}}]
+
+        for item in fallback_calls:
+            action = Action(tool=item.get("tool", ""), args=item.get("args", {}))
+            if reuse_artifact and action.tool.startswith("filesystem."):
+                if action.tool == "filesystem.create_file":
+                    memory.log_action(run_id, name="reuse_artifact", params=action.__dict__, result={"path": reuse_artifact, "skipped": True})
+                    last_path = reuse_artifact
+                    continue
+                if action.tool == "filesystem.append_file":
+                    action.args["filename"] = Path(reuse_artifact).name
+
+            result = router.dispatch(action)
+
+            if isinstance(result, dict) and result.get("error"):
+                err = result.get("error", "").lower()
+                if action.tool.startswith("filesystem.") and ("filename" in action.args) and ("invalid" in err or "illegal" in err or "file name" in err):
+                    action.args["filename"] = _sanitize_filename(str(action.args.get("filename", "notes.txt")))
+                    result = router.dispatch(action)
+
+            if action.tool == "web.fetch" and isinstance(result, dict):
+                last_web_result = result
+            if action.tool == "uia.read_text" and isinstance(result, dict):
+                did_ui_read = True
+                t = result.get("text")
+                if isinstance(t, str) and t.strip():
+                    last_ui_text = t
+            if isinstance(result, dict) and result.get("path"):
+                last_path = result["path"]
+            memory.log_action(run_id, name=action.tool, params=action.args, result=result)
+
+        # If fallback structured run didn't create/update a file but we fetched web content, persist a summary
+        if not last_path and last_web_result:
+            content_lines = []
+            title = last_web_result.get("title") or "Web Result"
+            url = last_web_result.get("url") or ""
+            excerpt = last_web_result.get("excerpt") or last_web_result.get("content") or ""
+            try:
+                summary_prompt = (
+                    "Summarize the following content into 5-8 concise bullet points focusing on key facts and definitions.\n"
+                    "Use plain text bullets starting with '- '. Avoid boilerplate like navigation or menu items.\n\n"
+                    f"CONTENT:\n{excerpt[:4000]}"
+                )
+                summary_text = llm.generate(summary_prompt, system="You are a precise summarizer.", temperature=0.2)
+            except Exception:
+                summary_text = ""
+            if not summary_text or "- " not in summary_text[:200]:
+                import re as _re
+                sentences = _re.split(r"(?<=[.!?])\s+", excerpt)
+                bullets = [f"- {s.strip()}" for s in sentences if len(s.strip()) > 0][:8]
+                summary_text = "\n".join(bullets)
+            content_lines.append(f"Title: {title}")
+            if url:
+                content_lines.append(f"URL: {url}")
+            if summary_text:
+                content_lines.append("")
+                content_lines.append(summary_text)
+            content = "\n".join(content_lines).strip()
+            target_name = Path(reuse_artifact).name if reuse_artifact else default_filename
+            target_path = (artifacts_dir() / target_name)
+            create_res = fs.create_file(target_name, content if content else f"Notes for goal: {goal}")
+            memory.log_action(run_id, name="filesystem.create_file", params={"filename": target_name}, result=create_res)
+            last_path = create_res.get("path", str(target_path))
+        if not last_path and (last_ui_text or did_ui_read):
+            try:
+                summary_prompt = (
+                    "You are given raw text captured from a Notepad window on the user's screen.\n"
+                    "Succinctly define what's on the screen in 3-6 bullets.\n"
+                    "If it's short, include the exact text first, then a brief interpretation.\n\n"
+                    f"TEXT:\n{(last_ui_text or '').strip()[:6000]}"
+                )
+                summary = llm.generate(summary_prompt, system="You are a precise desktop content summarizer.", temperature=0.2)
+            except Exception:
+                summary = last_ui_text or ""
+            target_name = Path(reuse_artifact).name if reuse_artifact else default_filename
+            target_path = (artifacts_dir() / target_name)
+            if last_ui_text and last_ui_text.strip():
+                body = f"Captured Notepad Content:\n\n{last_ui_text}\n\nSummary:\n{summary}" if summary and summary.strip() else last_ui_text
+            else:
+                body = summary if summary.strip() else "No readable Notepad content was detected."
+            create_res = fs.create_file(target_name, body)
+            memory.log_action(run_id, name="filesystem.create_file", params={"filename": target_name}, result=create_res)
+            last_path = create_res.get("path", str(target_path))
 
     memory.log_message(run_id, "assistant", f"Completed. Artifact: {last_path}")
 

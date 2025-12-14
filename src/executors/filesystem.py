@@ -45,7 +45,8 @@ class FileSystemExecutor:
         path = self._resolve_path(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        return {"action": "filesystem.create_file", "path": str(path)}
+        print(f"[FileSystem] Created file: {path}")
+        return {"action": "filesystem.create_file", "path": str(path), "success": True}
 
     def append_file(self, filename: str, content: str) -> Dict[str, str]:
         path = self._resolve_path(filename)

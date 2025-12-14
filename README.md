@@ -1,396 +1,372 @@
-# Kayas AI Assistant: Virtual Agent with Voice & Desktop Control
+# 🤖 Kayas AI Assistant
 
-A comprehensive AI assistant that combines voice interaction, desktop automation, web browsing, and API integrations. Talk to Kayas naturally or type commands - it can control your computer, browse the web, manage your calendar, and much more.
+<div align="center">
 
-## ✨ Key Features
-- 🗣️ **Voice Interaction**: Natural speech-to-text (Whisper) and text-to-speech conversation
-- 🖥️ **Desktop Control**: Full Windows automation with OCR, image recognition, and clicking
-- 🌐 **Web Browsing**: Interactive browser automation with session persistence
-- 📅 **Integrations**: Google Calendar, Slack, Spotify control
-- 🧠 **Smart Memory**: Persistent conversations with context awareness
-- 🎯 **Trained 7B Model**: Fine-tuned Mistral-7B for intelligent task routing
-- 🤖 **Local LLM**: Powered by Ollama or HuggingFace (privacy-focused, runs offline)
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![LLM](https://img.shields.io/badge/LLM-Qwen2.5-orange.svg)
 
-## 🚀 Quick Start
+**An intelligent, voice-enabled AI assistant that can automate your desktop, browse the web, and integrate with your favorite apps.**
 
-### 1. Install Dependencies
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+[Features](#-features) • [Architecture](#-architecture) • [Installation](#-installation) • [Usage](#-usage) • [Integrations](#-integrations)
+
+</div>
+
+---
+
+## 🎯 Overview
+
+Kayas is a **fully autonomous AI assistant** built from scratch that combines:
+
+- 🎤 **Voice Control** — Natural speech input via Whisper ASR + Text-to-Speech responses
+- 🖥️ **Desktop Automation** — Control any Windows application via UI Automation & PyAutoGUI
+- 🌐 **Web Automation** — Playwright-based browser control with visual perception
+- 🧠 **Local LLM** — Runs entirely offline using quantized Qwen2.5-3B with custom LoRA fine-tuning
+- 🔌 **Multi-Platform Integrations** — WhatsApp, Slack, Spotify, GitHub, Jira, Notion, Google Calendar, and more
+
+**No cloud APIs required** — your data stays on your machine.
+
+---
+
+## ✨ Features
+
+### 🎙️ Voice Interface
+- **Wake-word detection** with continuous listening mode
+- **Whisper-based STT** for accurate speech recognition
+- **Natural TTS responses** via pyttsx3
+- **Conversation memory** — remembers context across sessions
+
+### 🖥️ Desktop Automation
+- **UI Automation** (pywinauto) — Interact with any Windows application
+- **OCR-based fallback** (Tesseract) — Read text from any screen element
+- **Computer Vision** — OpenCV-powered visual element detection
+- **Multi-layer perception engine** — Combines UIA + OCR + Vision for maximum reliability
+
+### 🌐 Web Automation
+- **Playwright browser control** — Headless or visible Chrome/Firefox
+- **Session persistence** — Stay logged in across restarts
+- **Smart element detection** — CSS selectors + visual matching
+- **WhatsApp Web automation** — Full messaging, media, groups, and more
+
+### 🧠 AI Planning & Execution
+- **Structured JSON tool-calls** — Reliable, parseable output format
+- **ReAct reasoning mode** — Think step-by-step for complex tasks
+- **Multi-step execution** — Break down complex goals into subtasks
+- **Safety guardrails** — Blocks dangerous operations
+
+### 📊 Memory & Learning
+- **SQLite conversation memory** — Persistent chat history
+- **Vector memory** (ChromaDB) — Semantic search over past interactions
+- **Fine-tuning pipeline** — Train custom LoRA adapters on your usage patterns
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        KAYAS ASSISTANT                          │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
+│  │   Voice UI   │    │   Chat GUI   │    │   CLI Mode   │       │
+│  │   (STT/TTS)  │    │  (Tkinter)   │    │   (Rich)     │       │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘       │
+│         │                   │                   │               │
+│         └───────────────────┴───────────────────┘               │
+│                             │                                   │
+│  ┌──────────────────────────▼──────────────────────────────┐    │
+│  │                    AGENT CORE                           │    │
+│  │  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌──────────┐   │    │
+│  │  │ Planner │  │ Executor │  │ Router  │  │  Safety  │   │    │
+│  │  │  (LLM)  │  │ Manager  │  │         │  │ Checker  │   │    │
+│  │  └─────────┘  └──────────┘  └─────────┘  └──────────┘   │    │
+│  └──────────────────────────┬──────────────────────────────┘    │
+│                             │                                   │
+│  ┌──────────────────────────▼──────────────────────────────┐    │
+│  │                    LLM BACKENDS                         │    │
+│  │  ┌──────────┐  ┌───────────────┐  ┌─────────────────┐   │    │
+│  │  │  Ollama  │  │  HuggingFace  │  │   HTTP Remote   │   │    │
+│  │  │  (API)   │  │  (4-bit+LoRA) │  │   (Any API)     │   │    │
+│  │  └──────────┘  └───────────────┘  └─────────────────┘   │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                             │                                   │
+│  ┌──────────────────────────▼──────────────────────────────┐    │
+│  │                     EXECUTORS                           │    │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌──────────┐    │    │
+│  │  │Desktop  │  │ Browser │  │WhatsApp │  │ Spotify  │    │    │
+│  │  │(UIA+CV) │  │(Playwrt)│  │  (Web)  │  │  (API)   │    │    │
+│  │  ├─────────┤  ├─────────┤  ├─────────┤  ├──────────┤    │    │
+│  │  │  Slack  │  │  GitHub │  │  Jira   │  │  Notion  │    │    │
+│  │  │  (SDK)  │  │  (API)  │  │  (API)  │  │  (API)   │    │    │
+│  │  ├─────────┤  ├─────────┤  ├─────────┤  ├──────────┤    │    │
+│  │  │Calendar │  │  Email  │  │Filesys  │  │  Audio   │    │    │
+│  │  │(Google) │  │ (SMTP)  │  │ (Local) │  │(Record)  │    │    │
+│  │  └─────────┘  └─────────┘  └─────────┘  └──────────┘    │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                             │                                   │
+│  ┌──────────────────────────▼──────────────────────────────┐    │
+│  │                      MEMORY                             │    │
+│  │  ┌────────────────┐        ┌─────────────────────────┐  │    │
+│  │  │ SQLite Memory  │        │  ChromaDB Vector Store  │  │    │
+│  │  │ (Conversations)│        │  (Semantic Search)      │  │    │
+│  │  └────────────────┘        └─────────────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Install Ollama and Voice Components
-```powershell
-# Install Ollama (https://ollama.ai) and pull a model
-ollama pull llama3.1
+---
+
+## 🚀 Installation
+
+### Prerequisites
+
+- **Python 3.10+**
+- **Windows 10/11** (for desktop automation features)
+- **Tesseract OCR** — [Download here](https://github.com/UB-Mannheim/tesseract/wiki)
+- **Chrome/Chromium** (for browser automation)
+
+### Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/kayas881/kayas_Assistant.git
+cd kayas_Assistant
+
+# Create virtual environment
+python -m venv venv
+venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
 
 # Install Playwright browsers
-python -m playwright install
+playwright install chromium
 
-# Optional: Install Tesseract for OCR (download from GitHub releases)
-# Add tesseract.exe to your PATH
-```
-
-### 3. Enable Desktop Automation (Optional but Recommended)
-```powershell
-Set-Item Env:DESKTOP_AUTOMATION_ENABLED "1"
-```
-
-### 4. Launch Kayas
-```powershell
-# GUI Mode (recommended)
-python kayas.py --gui
-
-# Voice CLI Mode  
-python kayas.py --continuous
-
-# Text-only Mode
-python kayas.py --no-voice
-```
-
-## 📚 Documentation
-- Detailed guides moved to `docs/`
-- See `docs/INDEX.md` for the full list
-
-## 💬 Usage Examples
-
-Once running, you can say or type:
-
-**Desktop Control:**
-- "Take a screenshot"
-- "Click on the Start button"
-- "Type 'hello world' and press Enter"
-- "Find the text 'Settings' and click on it"
-
-**Web Browsing:**
-- "Go to google.com and search for Python tutorials"
-- "Fill out the login form with my email"
-- "Take a screenshot of this webpage"
-
-**Productivity:**
-- "Create a calendar event for tomorrow at 2 PM"
-- "Send a Slack message to #general saying hello"
-- "Play some jazz music on Spotify"
-
-**File Management:**
-- "Create a notes file about today's meeting"
-- "Search my files for documents about Python"
-
-## 🎙️ Voice Modes
-
-### GUI Mode (Easiest)
-```powershell
-python kayas.py --gui
-```
-- Point-and-click interface
-- Push-to-talk voice button
-- Real-time conversation display
-
-### Continuous Listening
-```powershell
-python kayas.py --continuous
-```
-- Always listening for wake words: "Hey Kayas", "Kayas"
-- Hands-free operation
-- Say "stop listening" to exit
-
-### Push-to-Talk CLI
-```powershell
+# Run the assistant
 python kayas.py
-```
-- Press Enter to start speaking
-- Type messages directly
-- Most reliable for noisy environments
-
-## Run API server
-```powershell
-$env:OLLAMA_MODEL = "llama3.1"
-uvicorn src.server.api:app --reload --port 8000
-```
-Then POST a goal:
-```powershell
-Invoke-RestMethod -Uri http://localhost:8000/agent/run -Method Post -Body (@{goal='Kayas, make a notes file about freelancing'} | ConvertTo-Json) -ContentType 'application/json'
-```
-
-### Tool routes
-- Web fetch:
-```powershell
-Invoke-RestMethod -Uri http://localhost:8000/tools/web/fetch -Method Post -Body (@{url='https://example.com'} | ConvertTo-Json) -ContentType 'application/json'
-```
-- Local search:
-```powershell
-Invoke-RestMethod -Uri http://localhost:8000/tools/local/search -Method Post -Body (@{query='freelancing'} | ConvertTo-Json) -ContentType 'application/json'
-```
-- Email send:
-```powershell
-Invoke-RestMethod -Uri http://localhost:8000/tools/email/send -Method Post -Body (@{to='you@example.com'; subject='Hi'; body='Hello'} | ConvertTo-Json) -ContentType 'application/json'
-```
-
-- Google Calendar:
-```powershell
-# List upcoming events (7 days)
-Invoke-RestMethod -Uri http://localhost:8000/tools/calendar/list_events -Method Post -Body (@{calendar_id='primary'; max_results=5; days_ahead=7} | ConvertTo-Json) -ContentType 'application/json'
-
-# Create an event (ISO 8601 UTC times)
-Invoke-RestMethod -Uri http://localhost:8000/tools/calendar/create_event -Method Post -Body (@{summary='Focus block'; start_time='2025-09-22T09:00:00Z'; end_time='2025-09-22T10:00:00Z'; description='Deep work'} | ConvertTo-Json) -ContentType 'application/json'
-```
-
-- Slack:
-```powershell
-# Send a message
-Invoke-RestMethod -Uri http://localhost:8000/tools/slack/send_message -Method Post -Body (@{channel='#general'; text='Hello from agent'} | ConvertTo-Json) -ContentType 'application/json'
-
-# List channels
-Invoke-RestMethod -Uri http://localhost:8000/tools/slack/list_channels -Method Post -Body (@{types='public_channel,private_channel'; limit=50} | ConvertTo-Json) -ContentType 'application/json'
-```
-
-- Spotify:
-```powershell
-# Search tracks
-Invoke-RestMethod -Uri http://localhost:8000/tools/spotify/search -Method Post -Body (@{query='jazz focus'; search_type='track'; limit=5} | ConvertTo-Json) -ContentType 'application/json'
-
-# Play a specific track by URI
-Invoke-RestMethod -Uri http://localhost:8000/tools/spotify/play -Method Post -Body (@{track_uri='spotify:track:xxxxxxxx'; device_id=$null} | ConvertTo-Json) -ContentType 'application/json'
-
-# Play top result for a query
-Invoke-RestMethod -Uri http://localhost:8000/tools/spotify/play_query -Method Post -Body (@{query='jazz for focus'} | ConvertTo-Json) -ContentType 'application/json'
-
-# Currently playing
-Invoke-RestMethod -Uri http://localhost:8000/tools/spotify/current -Method Get
-```
-
-- Browser automation (Playwright):
-```powershell
-# Example: go to example.com, take a screenshot
-$steps = @(
-  @{ action = 'goto'; args = @{ url = 'https://example.com' } },
-  @{ action = 'wait_for_selector'; args = @{ selector = 'h1'; state = 'visible' } },
-  @{ action = 'screenshot'; args = @{ full_page = $true; filename = 'example_home.png' } }
-)
-Invoke-RestMethod -Uri http://localhost:8000/tools/browser/run_steps -Method Post -Body (@{ steps = $steps; headless = $true } | ConvertTo-Json -Depth 6) -ContentType 'application/json'
-```
-Session persistence and login flow
-```powershell
-# Persisted session across runs (cookies/localStorage saved under .agent\browser_sessions\mySite.json)
-$loginSteps = @(
-  @{ action = 'goto'; args = @{ url = 'https://example.com/login' } },
-  @{ action = 'login_flow'; args = @{ 
-        url = 'https://example.com/login';
-        username_selector = '#email';
-        password_selector = '#password';
-        username = 'user@example.com';
-        password = 'P@ssw0rd!';
-        submit_selector = 'button[type=submit]';
-        success_selector = 'nav .profile';
-        error_selector = '.error, .alert-danger';
-        retry_count = 2; retry_delay_ms = 1500; wait_success_ms = 8000 } },
-  @{ action = 'screenshot'; args = @{ filename = 'after_login.png' } }
-)
-Invoke-RestMethod -Uri http://localhost:8000/tools/browser/run_steps -Method Post -Body (
-  @{ steps = $loginSteps; headless = $true; session_name = 'mySite'; persist_session = $true } | ConvertTo-Json -Depth 6
-) -ContentType 'application/json'
-
-# Next run can reuse session without re-login
-$steps = @(
-  @{ action = 'goto'; args = @{ url = 'https://example.com/account' } },
-  @{ action = 'wait_for_selector'; args = @{ selector = 'h1'; state = 'visible' } },
-  @{ action = 'screenshot'; args = @{ filename = 'account.png' } }
-)
-Invoke-RestMethod -Uri http://localhost:8000/tools/browser/run_steps -Method Post -Body (
-  @{ steps = $steps; headless = $true; session_name = 'mySite' } | ConvertTo-Json -Depth 6
-) -ContentType 'application/json'
-```
-
-Install Playwright (Windows):
-```powershell
-python -m pip install playwright
-python -m playwright install
-```
-
-## Desktop automation (Windows)
-
-Danger: This gives the agent control of your mouse and keyboard. Keep it disabled unless you understand the risks.
-
-Enable (env or profile):
-```powershell
-$env:DESKTOP_AUTOMATION_ENABLED = "1"
-```
-
-Install packages:
-```powershell
-python -m pip install pyautogui opencv-python pytesseract pyperclip pygetwindow
-```
-
-Optional OCR on Windows: Install Tesseract and add to PATH
-- Download: https://github.com/tesseract-ocr/tesseract (Windows installer)
-- After installing, restart shell so `tesseract` is on PATH
-
-Run steps via API:
-```powershell
-$steps = @(
-  @{ action = 'screenshot'; args = @{ filename = 'desktop_before.png' } },
-  @{ action = 'move_to'; args = @{ x = 100; y = 100; duration = 0.2 } },
-  @{ action = 'click' },
-  @{ action = 'write'; args = @{ text = 'hello world' } },
-  @{ action = 'hotkey'; args = @{ keys = @('ctrl','s') } },
-  @{ action = 'screenshot'; args = @{ filename = 'desktop_after.png' } }
-)
-Invoke-RestMethod -Uri http://localhost:8000/tools/desktop/run_steps -Method Post -Body (@{ steps = $steps } | ConvertTo-Json -Depth 6) -ContentType 'application/json'
-```
-
-Available actions (high-level):
-- Mouse: `move_to(x,y,duration)`, `move_rel(dx,dy,duration)`, `click([x],[y])`, `double_click([x],[y])`, `right_click([x],[y])`, `middle_click([x],[y])`, `drag_to(x,y,duration)`, `drag_rel(dx,dy,duration)`
-- Keyboard: `write(text)`, `paste([text])`, `hotkey(keys=[...])`, `key_down(key)`, `key_up(key)`
-- Scrolling: `scroll(clicks,[x],[y])`, `hscroll(clicks,[x],[y])` (horizontal; may not be supported on all platforms)
-- Screen/Image: `screenshot([filename],[region])`, `locate_on_screen(image,confidence)`, `wait_for_image(image,confidence,timeout_ms)`
-- OCR/Text: `ocr_region(region,[lang])`, `find_text(text,[region],[lang])`, `locate_by_text(text,[region],[lang],[match],[return])`, `click_text(text,[region],[lang])`
-- Clipboard: `get_clipboard`, `set_clipboard(text)`
-- Windows: `list_windows`, `focus_window(title)`, `bring_to_front(title)`, `move_window(title,x,y)`
-
-Example: Image wait + text click + hscroll
-```powershell
-$steps = @(
-  @{ action = 'wait_for_image'; args = @{ image = 'c:/path/to/template.png'; confidence = 0.9; timeout_ms = 10000 } },
-  @{ action = 'click_text'; args = @{ text = 'Settings'; lang = 'eng' } },
-  @{ action = 'hscroll'; args = @{ clicks = -300 } }
-)
-Invoke-RestMethod -Uri http://localhost:8000/tools/desktop/run_steps -Method Post -Body (@{ steps = $steps } | ConvertTo-Json -Depth 6) -ContentType 'application/json'
-```
-
-Example: Locate text without clicking
-```powershell
-$steps = @(
-  @{ action = 'locate_by_text'; args = @{ text = 'Download'; lang = 'eng'; match = 'equals'; return = 'first' } }
-)
-Invoke-RestMethod -Uri http://localhost:8000/tools/desktop/run_steps -Method Post -Body (@{ steps = $steps } | ConvertTo-Json -Depth 6) -ContentType 'application/json'
-```
-
-Example: Window control
-```powershell
-$steps = @(
-  @{ action = 'bring_to_front'; args = @{ title = 'Notepad' } },
-  @{ action = 'move_window'; args = @{ title = 'Notepad'; x = 50; y = 50 } }
-)
-Invoke-RestMethod -Uri http://localhost:8000/tools/desktop/run_steps -Method Post -Body (@{ steps = $steps } | ConvertTo-Json -Depth 6) -ContentType 'application/json'
-```
-
-Caveats:
-- Horizontal scrolling (`hscroll`) might not be supported depending on your environment.
-- Window control requires `pygetwindow`; some apps may block programmatic focusing/moving.
-- OCR requires Tesseract installed and on PATH. Accuracy depends on font size, contrast, and language.
-- The automation uses your real mouse/keyboard. Move your mouse to a screen corner to trigger PyAutoGUI FAILSAFE.
-
-## Setup API integrations
-
-Install extras:
-```powershell
-python -m pip install -r requirements.txt
-```
-
-Environment variables (PowerShell):
-```powershell
-# Google Calendar
-$env:GOOGLE_CALENDAR_CREDENTIALS = "C:\path\to\client_secret.json"
-$env:GOOGLE_CALENDAR_TOKEN = ".agent\google_token.json"
-
-# Slack
-$env:SLACK_BOT_TOKEN = "xoxb-..."
-$env:SLACK_USER_TOKEN = "xoxp-..."
-
-# Spotify
-$env:SPOTIFY_CLIENT_ID = "your_client_id"
-$env:SPOTIFY_CLIENT_SECRET = "your_client_secret"
-$env:SPOTIFY_REDIRECT_URI = "http://localhost:8888/callback"
-```
-
-Notes:
-- First-time Google Calendar use opens a browser for consent; a token is stored at `GOOGLE_CALENDAR_TOKEN`.
-- Spotify playback requires an active device (e.g., open Spotify on your desktop or phone).
-- Slack operations require the bot to be in the channel and proper OAuth scopes.
-```
-
-### API Integration routes
-- Calendar events: `POST /tools/calendar/list_events`, `POST /tools/calendar/create_event`
-- Slack messaging: `POST /tools/slack/send_message`, `POST /tools/slack/list_channels`
-- Spotify control: `POST /tools/spotify/search`, `GET /tools/spotify/current`
-
-See [API_INTEGRATIONS.md](API_INTEGRATIONS.md) for detailed setup and usage.
-
-## Configuration
-- `OLLAMA_MODEL` (default: `llama3.1`)
-- `AGENT_LLM_BACKEND` (default: `ollama`; set to `hf` to use a Hugging Face model)
-- HF backend (when `AGENT_LLM_BACKEND=hf`):
-  - `HF_MERGED_MODEL_DIR` (preferred) path to a merged model directory
-  - or `HF_BASE_MODEL` + `HF_ADAPTER_DIR` (LoRA adapter path)
-  - `HF_USE_4BIT` (default: `1`) enable 4-bit loading when supported
-- `AGENT_ARTIFACTS_DIR` (default: `artifacts`)
-- `AGENT_DB_PATH` (default: `.agent/agent.db`)
-- `CHROMA_DIR` (default: `.agent/chroma`)
-- `EMBED_MODEL` (default: `nomic-embed-text`)
-- `SEARCH_ROOT` (default: current directory)
-- `PLANNING_MODE` (default: `structured`, options: `structured`, `react`)
-- SMTP:
-  - `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_TLS` (true)
-- API Integrations (see [API_INTEGRATIONS.md](API_INTEGRATIONS.md)):
-  - Google Calendar: `GOOGLE_CALENDAR_*` variables
-  - Slack: `SLACK_BOT_TOKEN`, `SLACK_USER_TOKEN`
-  - Spotify: `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, etc.
-
-## Notes
-- Playwright not required; a lightweight web fetch/scrape path is included. You can add Playwright later for JS-heavy pages.
-- Vector memory stores prior tasks/results and is consulted before planning to enable reuse.
-
-## Use your fine-tuned model in the Agent (HF backend)
-
-You can run Kayas with your fine-tuned QLoRA model (either merged or with an adapter):
-
-```powershell
-# Use a merged model directory
-$env:AGENT_LLM_BACKEND = "hf"
-$env:HF_MERGED_MODEL_DIR = "C:\\path\\to\\kayas-assistant-3b-merged"
-$env:HF_USE_4BIT = "1"  # optional
-
-# Or with base + adapter
-$env:AGENT_LLM_BACKEND = "hf"
-$env:HF_BASE_MODEL = "Qwen/Qwen2.5-3B-Instruct"
-$env:HF_ADAPTER_DIR = "C:\\path\\to\\checkpoint-297"
-```
-
-Then run the agent normally (GUI/CLI/API). The planner is already configured to emit JSON tool calls, and the parser was hardened to accept slightly noisy outputs.
-
-## 🎓 Using Your Trained 7B Model
-
-Your fine-tuned **Mistral-7B** model is ready to use! It's configured by default in `.agent/profile.yaml`.
-
-### Quick Test
-```powershell
-# Quick interactive test
-python quick_test_7b.py
-
-# Full test suite with automated + interactive modes
-python test_7b_model.py
-
-# Use in the full agent
-python -m src.agent.main "Create a summary about AI trends"
 ```
 
 ### Configuration
-The 7B model is configured in `.agent/profile.yaml`:
-```yaml
-models:
-  backend: hf
-  hf:
-    base_model: "mistralai/Mistral-7B-Instruct-v0.2"
-    adapter_dir: "brain_training/kayastune7b_t4/checkpoint-313"
-    use_4bit: true  # Enables 4-bit quantization for memory efficiency
+
+Create a `.env` file for API keys (optional):
+
+```env
+# Optional integrations
+SLACK_BOT_TOKEN=xoxb-...
+SPOTIFY_CLIENT_ID=...
+SPOTIFY_CLIENT_SECRET=...
+GITHUB_TOKEN=ghp_...
+JIRA_API_TOKEN=...
+NOTION_TOKEN=...
 ```
 
-### Model Details
-- **Base**: Mistral-7B-Instruct-v0.2
-- **Fine-tuned**: LoRA adapters trained on task-specific data
-- **Checkpoints**: 250, 300, 313 (latest active)
-- **Memory**: ~6GB GPU RAM with 4-bit quantization
-- **Capabilities**: Tool routing, JSON generation, multi-step planning
+---
 
-📖 **Full Guide**: See [USE_7B_MODEL.md](USE_7B_MODEL.md) for detailed usage, troubleshooting, and advanced options.
+## 💻 Usage
+
+### Command Line
+
+```bash
+# Interactive CLI mode
+python kayas.py
+
+# GUI mode
+python kayas.py --gui
+
+# Voice-enabled mode
+python kayas.py --continuous
+
+# Disable voice (text-only)
+python kayas.py --no-voice
+```
+
+### Example Commands
+
+```
+# Desktop Automation
+"Open Notepad and type Hello World"
+"Take a screenshot and save it to my desktop"
+"Find the Chrome window and click the search bar"
+
+# Web Automation
+"Search Google for Python tutorials"
+"Open YouTube and play some music"
+
+# WhatsApp (NEW!)
+"Send a WhatsApp message to John saying I'll be late"
+"Read my unread WhatsApp messages"
+"Send image C:\Photos\vacation.jpg to Family Group"
+
+# Productivity
+"Add a meeting to my calendar for tomorrow at 3pm"
+"Create a new Jira ticket for the login bug"
+"Send a Slack message to #general"
+
+# Media
+"Play my liked songs on Spotify"
+"Skip to the next track"
+
+# System
+"What processes are using the most CPU?"
+"Open the folder D:\Projects"
+```
+
+---
+
+## 🔌 Integrations
+
+| Integration | Status | Description |
+|-------------|--------|-------------|
+| **WhatsApp Web** | ✅ Complete | Send/receive messages, media, groups, contacts |
+| **Spotify** | ✅ Complete | Playback control, playlists, search |
+| **Slack** | ✅ Complete | Send messages, read channels, manage threads |
+| **GitHub** | ✅ Complete | Create issues, PRs, manage repos |
+| **Google Calendar** | ✅ Complete | Create/read/update events |
+| **Jira** | ✅ Complete | Create issues, update status, search |
+| **Notion** | ✅ Complete | Create pages, update databases |
+| **Email (SMTP)** | ✅ Complete | Send emails with attachments |
+| **Trello** | ✅ Complete | Create cards, manage boards |
+| **Local Files** | ✅ Complete | Read, write, search, organize |
+
+---
+
+## 🧠 LLM Configuration
+
+Kayas supports multiple LLM backends:
+
+### 1. Ollama (Recommended for beginners)
+```bash
+# Install Ollama, then:
+ollama pull qwen2.5:3b
+```
+
+### 2. HuggingFace Local (Best performance)
+- Uses 4-bit quantization for low VRAM usage
+- Custom LoRA fine-tuning included
+- Runs entirely offline
+
+### 3. Remote HTTP API
+- Connect to any OpenAI-compatible API
+- Use cloud models when needed
+
+---
+
+## 📁 Project Structure
+
+```
+kayas/
+├── kayas.py                 # Main entry point
+├── requirements.txt         # Python dependencies
+├── src/
+│   ├── agent/               # Core AI agent logic
+│   │   ├── planner.py       # LLM-based task planning
+│   │   ├── actions.py       # Action router
+│   │   ├── execution_manager.py
+│   │   ├── llm.py           # Ollama backend
+│   │   ├── hf_llm.py        # HuggingFace backend
+│   │   └── safety.py        # Safety guardrails
+│   ├── executors/           # Platform integrations
+│   │   ├── desktop_exec.py  # Windows UI automation
+│   │   ├── browser_exec.py  # Playwright web control
+│   │   ├── whatsapp_exec.py # WhatsApp Web automation
+│   │   ├── spotify_exec.py  # Spotify control
+│   │   └── ...              # 15+ more executors
+│   ├── voice/               # Voice interface
+│   │   ├── stt.py           # Speech-to-text (Whisper)
+│   │   ├── tts.py           # Text-to-speech
+│   │   └── gui.py           # Tkinter GUI
+│   └── memory/              # Persistence layer
+│       ├── sqlite_memory.py # Conversation storage
+│       └── vector_memory.py # Semantic search
+├── brain_training/          # Fine-tuning pipeline
+│   ├── finetuning.py        # LoRA training script
+│   └── final_adapter/       # Trained model weights
+└── artifacts/               # Generated outputs
+```
+
+---
+
+## 🎓 Technical Highlights
+
+### Multi-Layer Perception Engine
+The desktop automation uses a **3-layer perception system**:
+
+1. **UI Automation (pywinauto)** — Direct access to Windows accessibility APIs
+2. **OCR (Tesseract)** — Extract text from any visual element
+3. **Computer Vision (OpenCV)** — Template matching and visual detection
+
+This ensures maximum reliability across all Windows applications.
+
+### Structured Tool Calling
+The LLM outputs structured JSON tool calls:
+```json
+{
+  "tool": "whatsapp.send_message",
+  "args": {
+    "contact": "John",
+    "message": "Hey, running late!"
+  }
+}
+```
+
+This is more reliable than free-form text parsing and enables complex multi-step workflows.
+
+### Session Persistence
+- Browser sessions saved to disk — stay logged into WhatsApp, etc.
+- Conversation memory persists across restarts
+- Vector embeddings enable semantic search over history
+
+---
+
+## 🛠️ Development
+
+### Running Tests
+```bash
+pytest test_planner.py -v
+```
+
+### Fine-tuning the Model
+```bash
+cd brain_training
+python finetuning.py
+```
+
+### Adding New Executors
+1. Create `src/executors/my_exec.py`
+2. Register tools in `src/agent/planner.py`
+3. Add routing in `src/agent/actions.py`
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please read our contributing guidelines first.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 👤 Author
+
+**Kayas** — [GitHub](https://github.com/kayas881)
+
+---
+
+<div align="center">
+
+**Built with ❤️ and Python**
+
+*If you find this project useful, please give it a ⭐!*
+
+</div>

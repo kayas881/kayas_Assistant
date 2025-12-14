@@ -63,12 +63,14 @@ class ProcessExecutor:
                 "command": command
             }
 
-    def start_program(self, program: str, args: List[str] | None = None, 
+    def start_program(self, program: str, args: List[str] | str | None = None, 
                      background: bool = True, process_id: str | None = None) -> Dict[str, Any]:
         """Start a program/application."""
         try:
             cmd = [program]
             if args:
+                if isinstance(args, str):
+                    args = [args]
                 cmd.extend(args)
 
             process = subprocess.Popen(
@@ -134,6 +136,8 @@ class ProcessExecutor:
                         try:
                             cmd2 = [path]
                             if args:
+                                if isinstance(args, str):
+                                    args = [args]
                                 cmd2.extend(args)
                             process = subprocess.Popen(
                                 cmd2,

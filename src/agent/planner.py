@@ -93,6 +93,9 @@ STRUCTURED_SYSTEM = (
     "- spotify.get_user_playlists {limit?}\n"
     "- spotify.create_playlist {name, description?, public?}\n"
     "- spotify.add_tracks_to_playlist {playlist_id, track_uris}\n"
+    "- browser.open_chrome_profile {profile_name, chrome_path?, background?} (use this to open Chrome with a specific profile instead of perception clicks)\n"
+    "- app.open_spotify {path?, flags?, background?} (launch Spotify deterministically before media controls)\n"
+    "- messaging.send_to_contact {name, message, web_url?, headless?, stop_on_error?} (preferred over perception for quick messaging)\n"
     "- browser.run_steps {steps, headless?, base_url?, stop_on_error?} (steps: [{action, args} where action in [goto, click, fill, type, press, wait_for_selector, wait, extract_text, screenshot])\n"
     "- desktop.run_steps {steps, stop_on_error?} (steps: actions [sleep, move_to, click, double_click, write, hotkey, screenshot, locate_on_screen, click_image, ocr_region, locate_by_text])\n"
     "- process.run_command {command, timeout?, shell?, working_dir?}\n"
@@ -153,8 +156,44 @@ STRUCTURED_SYSTEM = (
     "- perception.smart_read {context?}\n"
     "- perception.find_element {description, context?}\n"
     "- perception.get_capabilities {}\n"
+    "WhatsApp Web automation (session-persistent, scan QR once):\n"
+    "- whatsapp.initialize {} (opens browser and navigates to WhatsApp Web; shows QR if not logged in)\n"
+    "- whatsapp.send_message {contact, message} (send a text message to a contact or group by name)\n"
+    "- whatsapp.read_messages {contact, limit?} (read recent messages from a chat)\n"
+    "- whatsapp.get_unread_chats {} (list all chats with unread messages)\n"
+    "- whatsapp.send_image {contact, image_path, caption?} (send an image with optional caption)\n"
+    "- whatsapp.send_video {contact, video_path, caption?} (send a video with optional caption)\n"
+    "- whatsapp.send_document {contact, file_path, caption?} (send any file/document)\n"
+    "- whatsapp.get_all_chats {limit?} (list all visible chats with preview)\n"
+    "- whatsapp.get_chat_info {contact} (get info about a contact or group)\n"
+    "- whatsapp.get_contact_info {contact} (get detailed contact info including about/status)\n"
+    "- whatsapp.get_last_seen {contact} (check if contact is online or last seen time)\n"
+    "- whatsapp.mark_as_read {contact} (mark a chat as read)\n"
+    "- whatsapp.mute_chat {contact, duration?} (mute notifications: '8 hours', '1 week', 'always')\n"
+    "- whatsapp.unmute_chat {contact} (unmute notifications)\n"
+    "- whatsapp.archive_chat {contact} (archive a chat)\n"
+    "- whatsapp.pin_chat {contact} (pin a chat to top)\n"
+    "- whatsapp.unpin_chat {contact} (unpin a chat)\n"
+    "- whatsapp.clear_chat {contact, keep_starred?} (clear chat history)\n"
+    "- whatsapp.delete_chat {contact} (delete a chat completely)\n"
+    "- whatsapp.block_contact {contact} (block a contact)\n"
+    "- whatsapp.unblock_contact {contact} (unblock a contact)\n"
+    "- whatsapp.forward_message {from_contact, to_contact, message_index?} (forward a message)\n"
+    "- whatsapp.reply_to_message {contact, reply_text, message_index?} (reply to a specific message)\n"
+    "- whatsapp.delete_message {contact, message_index?, for_everyone?} (delete a sent message)\n"
+    "- whatsapp.star_message {contact, message_index?} (star/unstar a message)\n"
+    "- whatsapp.search_messages {query, contact?} (search for messages globally or in a chat)\n"
+    "- whatsapp.create_group {group_name, members} (create a new group with members list)\n"
+    "- whatsapp.add_to_group {group_name, members} (add members to existing group)\n"
+    "- whatsapp.leave_group {group_name} (leave a group)\n"
+    "- whatsapp.send_location {contact} (share current location)\n"
+    "- whatsapp.send_contact {to_contact, share_contact} (share a contact with someone)\n"
+    "- whatsapp.screenshot {filename?} (screenshot current WhatsApp Web state)\n"
+    "- whatsapp.close {} (close the browser)\n"
     "Rules: prefer minimal steps; don't repeat work; use append_file not create if file already exists (if told). "
-    "For UI interactions, prefer perception.* tools as they try multiple methods automatically. "
+    "Prefer smart-default tools for known apps (Chrome profiles, Spotify launch, messaging) before using perception.* or generic clicks. "
+    "For WhatsApp tasks, use whatsapp.* tools directly - they are more reliable than browser automation. "
+    "For UI interactions not covered by smart defaults, prefer perception.* tools as they try multiple methods automatically. "
     "Use cv.* tools when you have a template image to match."
 )
 
@@ -164,8 +203,434 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
     fb = f"User preferences and corrections (guidance):\n{feedback_hints}\n" if feedback_hints else ""
     prompt = f"Goal: {goal}\n{hint}{fb}Emit JSON tool calls only, no extra text."
     try:
+        g = goal.lower()
+        # Smart defaults heuristics -------------------------------------------------
+        if ("chrome" in g) and ("profile" in g):
+            mprof = re.search(r"profile\s+(?:named|called)?\s*([\w\- ]+)", goal, re.IGNORECASE)
+            profile_name = mprof.group(1).strip() if mprof else "Default"
+            # Map friendly names to actual Chrome profile directories
+            profile_map = {
+                "kayas": "profile 2",
+                "kayas profile": "profile 2",
+                "kayass": "profile 2",
+            }
+            key = profile_name.lower()
+            if key in profile_map:
+                profile_name = profile_map[key]
+            heuristic = [{"tool": "browser.open_chrome_profile", "args": {"profile_name": profile_name}}]
+            raw = json.dumps(heuristic)
+            print(f"[Planner] Using chrome profile heuristic -> {profile_name}")
+            return heuristic, raw, prompt
+
+        if "spotify" in g and ("play" in g or "start" in g or "open" in g):
+            mtrack = re.search(r"play\s+([\w ']+)", goal, re.IGNORECASE)
+            query = mtrack.group(1).strip() if mtrack else ""
+            heuristic = [
+                {"tool": "app.open_spotify", "args": {}},
+                {"tool": "spotify.play_query", "args": {"query": query or "music"}},
+            ]
+            raw = json.dumps(heuristic)
+            print("[Planner] Using Spotify heuristic")
+            return heuristic, raw, prompt
+
+        # Image/video/file sending heuristics (even without "whatsapp" keyword)
+        # Pattern: "send image <path> to <contact>" or "send <path> to <contact>"
+        if "send" in g and any(word in g for word in ["image", "photo", "picture", "pic", ".jpg", ".png", ".jpeg", ".gif"]):
+            # Extract file path - look for paths with backslashes or file extensions
+            path_match = re.search(r'([A-Za-z]:\\[^\s]+\.[a-zA-Z0-9]+)', goal)
+            if not path_match:
+                path_match = re.search(r'([/\\]?[\w/\\]+\.[a-zA-Z0-9]+)', goal)
+            image_path = path_match.group(1) if path_match else ""
+            
+            # Extract contact - look for "to <name>" at end
+            contact_match = re.search(r'\bto\s+([A-Za-z][A-Za-z0-9_\s]*?)(?:\s+on|\s+via|\s+using|$)', goal, re.IGNORECASE)
+            contact = contact_match.group(1).strip() if contact_match else ""
+            
+            if image_path and contact:
+                heuristic = [{"tool": "whatsapp.send_image", "args": {"contact": contact, "image_path": image_path}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using send image heuristic -> {contact}, path: {image_path}")
+                return heuristic, raw, prompt
+        
+        if "send" in g and any(word in g for word in ["video", ".mp4", ".mov", ".avi"]):
+            path_match = re.search(r'([A-Za-z]:\\[^\s]+\.[a-zA-Z0-9]+)', goal)
+            if not path_match:
+                path_match = re.search(r'([/\\]?[\w/\\]+\.[a-zA-Z0-9]+)', goal)
+            video_path = path_match.group(1) if path_match else ""
+            
+            contact_match = re.search(r'\bto\s+([A-Za-z][A-Za-z0-9_\s]*?)(?:\s+on|\s+via|\s+using|$)', goal, re.IGNORECASE)
+            contact = contact_match.group(1).strip() if contact_match else ""
+            
+            if video_path and contact:
+                heuristic = [{"tool": "whatsapp.send_video", "args": {"contact": contact, "video_path": video_path}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using send video heuristic -> {contact}, path: {video_path}")
+                return heuristic, raw, prompt
+        
+        if "send" in g and any(word in g for word in ["document", "file", "doc", ".pdf", ".docx", ".xlsx", ".txt", ".zip"]):
+            path_match = re.search(r'([A-Za-z]:\\[^\s]+\.[a-zA-Z0-9]+)', goal)
+            if not path_match:
+                path_match = re.search(r'([/\\]?[\w/\\]+\.[a-zA-Z0-9]+)', goal)
+            file_path = path_match.group(1) if path_match else ""
+            
+            contact_match = re.search(r'\bto\s+([A-Za-z][A-Za-z0-9_\s]*?)(?:\s+on|\s+via|\s+using|$)', goal, re.IGNORECASE)
+            contact = contact_match.group(1).strip() if contact_match else ""
+            
+            if file_path and contact:
+                heuristic = [{"tool": "whatsapp.send_document", "args": {"contact": contact, "file_path": file_path}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using send document heuristic -> {contact}, path: {file_path}")
+                return heuristic, raw, prompt
+
+        # WhatsApp heuristics
+        if "whatsapp" in g:
+            # Send message via WhatsApp
+            if any(word in g for word in ["send", "message", "text", "tell", "say"]) and not any(word in g for word in ["image", "photo", "picture", "video", "file", "document", "location", "contact"]):
+                # Extract contact name and message
+                # Patterns: "message to John saying X", "send whatsapp to John", "tell John X"
+                contact_match = re.search(
+                    r"(?:message\s+)?(?:to\s+)?([A-Z][a-zA-Z]+)(?:\s+(?:saying|that|with|:|\"|on\s+whatsapp))",
+                    goal, re.IGNORECASE
+                )
+                if not contact_match:
+                    # Try: "to John" at end or before "saying"
+                    contact_match = re.search(r"to\s+([A-Z][a-zA-Z]+)(?:\s|$)", goal, re.IGNORECASE)
+                if not contact_match:
+                    # Try: "tell John"
+                    contact_match = re.search(r"tell\s+([A-Z][a-zA-Z]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                
+                msg_match = re.search(r"(?:saying|that|with|:)\s*\"?([^\"]+)\"?$", goal, re.IGNORECASE)
+                if not msg_match:
+                    msg_match = re.search(r"send\s+\"([^\"]+)\"", goal, re.IGNORECASE)
+                message = msg_match.group(1).strip() if msg_match else "Hello"
+                
+                if contact:
+                    heuristic = [{"tool": "whatsapp.send_message", "args": {"contact": contact, "message": message}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp send message heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Send image/photo
+            if any(word in g for word in ["image", "photo", "picture", "pic"]) and "send" in g:
+                contact_match = re.search(r"to\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|\s+via|\s+with|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                path_match = re.search(r"(?:image|photo|picture|pic)\s+([^\s]+\.[a-z]+)", goal, re.IGNORECASE)
+                if not path_match:
+                    path_match = re.search(r"\"([^\"]+)\"", goal)
+                image_path = path_match.group(1) if path_match else ""
+                if contact and image_path:
+                    heuristic = [{"tool": "whatsapp.send_image", "args": {"contact": contact, "image_path": image_path}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp send image heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Send video
+            if "video" in g and "send" in g:
+                contact_match = re.search(r"to\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|\s+via|\s+with|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                path_match = re.search(r"video\s+([^\s]+\.[a-z]+)", goal, re.IGNORECASE)
+                if not path_match:
+                    path_match = re.search(r"\"([^\"]+)\"", goal)
+                video_path = path_match.group(1) if path_match else ""
+                if contact and video_path:
+                    heuristic = [{"tool": "whatsapp.send_video", "args": {"contact": contact, "video_path": video_path}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp send video heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Send document/file
+            if any(word in g for word in ["document", "file", "doc", "pdf"]) and "send" in g:
+                contact_match = re.search(r"to\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|\s+via|\s+with|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                path_match = re.search(r"(?:document|file|doc)\s+([^\s]+\.[a-z]+)", goal, re.IGNORECASE)
+                if not path_match:
+                    path_match = re.search(r"\"([^\"]+)\"", goal)
+                file_path = path_match.group(1) if path_match else ""
+                if contact and file_path:
+                    heuristic = [{"tool": "whatsapp.send_document", "args": {"contact": contact, "file_path": file_path}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp send document heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Forward message
+            if "forward" in g:
+                from_match = re.search(r"from\s+([A-Za-z][A-Za-z\s]+?)(?:\s+to)", goal, re.IGNORECASE)
+                to_match = re.search(r"to\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|\s+via|$)", goal, re.IGNORECASE)
+                from_contact = from_match.group(1).strip() if from_match else ""
+                to_contact = to_match.group(1).strip() if to_match else ""
+                if from_contact and to_contact:
+                    heuristic = [{"tool": "whatsapp.forward_message", "args": {"from_contact": from_contact, "to_contact": to_contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp forward heuristic -> {from_contact} to {to_contact}")
+                    return heuristic, raw, prompt
+            
+            # Reply to message
+            if "reply" in g:
+                contact_match = re.search(r"(?:to|in)\s+([A-Za-z][A-Za-z\s]+?)(?:\s+saying|\s+with|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                msg_match = re.search(r"(?:saying|with)\s*\"?([^\"]+)\"?$", goal, re.IGNORECASE)
+                reply_text = msg_match.group(1).strip() if msg_match else "Ok"
+                if contact:
+                    heuristic = [{"tool": "whatsapp.reply_to_message", "args": {"contact": contact, "reply_text": reply_text}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp reply heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Read messages
+            if any(word in g for word in ["read", "check", "show", "get"]) and "message" in g:
+                contact_match = re.search(r"(?:from|with)\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.read_messages", "args": {"contact": contact, "limit": 10}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp read messages heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Check unread
+            if any(word in g for word in ["unread", "new messages", "notifications"]):
+                heuristic = [{"tool": "whatsapp.get_unread_chats", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using WhatsApp get unread heuristic")
+                return heuristic, raw, prompt
+            
+            # List all chats
+            if any(word in g for word in ["list", "show", "all"]) and "chat" in g:
+                heuristic = [{"tool": "whatsapp.get_all_chats", "args": {"limit": 20}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using WhatsApp get all chats heuristic")
+                return heuristic, raw, prompt
+            
+            # Search messages
+            if "search" in g:
+                query_match = re.search(r"(?:search|find)\s+(?:for\s+)?\"?([^\"]+)\"?", goal, re.IGNORECASE)
+                query = query_match.group(1).strip() if query_match else ""
+                contact_match = re.search(r"(?:in|from)\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else None
+                if query:
+                    args = {"query": query}
+                    if contact:
+                        args["contact"] = contact
+                    heuristic = [{"tool": "whatsapp.search_messages", "args": args}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp search heuristic -> {query}")
+                    return heuristic, raw, prompt
+            
+            # Mute chat
+            if "mute" in g and "unmute" not in g:
+                contact_match = re.search(r"mute\s+([A-Za-z][A-Za-z\s]+?)(?:\s+for|\s+on|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.mute_chat", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp mute heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Unmute chat
+            if "unmute" in g:
+                contact_match = re.search(r"unmute\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.unmute_chat", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp unmute heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Archive chat
+            if "archive" in g:
+                contact_match = re.search(r"archive\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.archive_chat", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp archive heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Pin/unpin chat
+            if "pin" in g:
+                contact_match = re.search(r"(?:pin|unpin)\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    tool = "whatsapp.unpin_chat" if "unpin" in g else "whatsapp.pin_chat"
+                    heuristic = [{"tool": tool, "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp pin/unpin heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Block/unblock contact
+            if "block" in g:
+                contact_match = re.search(r"(?:block|unblock)\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    tool = "whatsapp.unblock_contact" if "unblock" in g else "whatsapp.block_contact"
+                    heuristic = [{"tool": tool, "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp block/unblock heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Delete message
+            if "delete" in g and "message" in g:
+                contact_match = re.search(r"(?:from|in)\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.delete_message", "args": {"contact": contact, "for_everyone": True}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp delete message heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Delete/clear chat
+            if "delete" in g and "chat" in g:
+                contact_match = re.search(r"delete\s+(?:chat\s+)?(?:with\s+)?([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.delete_chat", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp delete chat heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            if "clear" in g and "chat" in g:
+                contact_match = re.search(r"clear\s+(?:chat\s+)?(?:with\s+)?([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.clear_chat", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp clear chat heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Star message
+            if "star" in g:
+                contact_match = re.search(r"(?:in|from)\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.star_message", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp star message heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Create group
+            if "create" in g and "group" in g:
+                name_match = re.search(r"(?:called|named)\s+\"?([^\"]+)\"?", goal, re.IGNORECASE)
+                group_name = name_match.group(1).strip() if name_match else "New Group"
+                members_match = re.search(r"with\s+(.+?)(?:\s+on|$)", goal, re.IGNORECASE)
+                members = []
+                if members_match:
+                    members = [m.strip() for m in re.split(r",|\s+and\s+", members_match.group(1))]
+                if members:
+                    heuristic = [{"tool": "whatsapp.create_group", "args": {"group_name": group_name, "members": members}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp create group heuristic -> {group_name}")
+                    return heuristic, raw, prompt
+            
+            # Add to group
+            if "add" in g and "group" in g:
+                group_match = re.search(r"to\s+(?:group\s+)?([A-Za-z][A-Za-z\s]+?)(?:\s+group|$)", goal, re.IGNORECASE)
+                group_name = group_match.group(1).strip() if group_match else ""
+                members_match = re.search(r"add\s+(.+?)\s+to", goal, re.IGNORECASE)
+                members = []
+                if members_match:
+                    members = [m.strip() for m in re.split(r",|\s+and\s+", members_match.group(1))]
+                if group_name and members:
+                    heuristic = [{"tool": "whatsapp.add_to_group", "args": {"group_name": group_name, "members": members}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp add to group heuristic -> {group_name}")
+                    return heuristic, raw, prompt
+            
+            # Leave group
+            if "leave" in g and "group" in g:
+                group_match = re.search(r"leave\s+(?:the\s+)?(?:group\s+)?([A-Za-z][A-Za-z\s]+?)(?:\s+group|$)", goal, re.IGNORECASE)
+                group_name = group_match.group(1).strip() if group_match else ""
+                if group_name:
+                    heuristic = [{"tool": "whatsapp.leave_group", "args": {"group_name": group_name}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp leave group heuristic -> {group_name}")
+                    return heuristic, raw, prompt
+            
+            # Send location
+            if "location" in g:
+                contact_match = re.search(r"to\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.send_location", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp send location heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Send/share contact
+            if "share" in g and "contact" in g:
+                to_match = re.search(r"(?:to|with)\s+([A-Za-z][A-Za-z\s]+?)(?:\s+on|$)", goal, re.IGNORECASE)
+                share_match = re.search(r"share\s+([A-Za-z][A-Za-z\s]+?)(?:\s+contact|\s+with|\s+to)", goal, re.IGNORECASE)
+                to_contact = to_match.group(1).strip() if to_match else ""
+                share_contact = share_match.group(1).strip() if share_match else ""
+                if to_contact and share_contact:
+                    heuristic = [{"tool": "whatsapp.send_contact", "args": {"to_contact": to_contact, "share_contact": share_contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp share contact heuristic -> {share_contact} to {to_contact}")
+                    return heuristic, raw, prompt
+            
+            # Check online/last seen
+            if any(word in g for word in ["online", "last seen", "status"]):
+                contact_match = re.search(r"(?:of|for|is)\s+([A-Za-z][A-Za-z\s]+?)(?:\s+online|\s+on|$)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.get_last_seen", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp last seen heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Get contact/chat info
+            if any(word in g for word in ["info", "about", "details"]):
+                contact_match = re.search(r"(?:of|about|for)\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
+                contact = contact_match.group(1).strip() if contact_match else ""
+                if contact:
+                    heuristic = [{"tool": "whatsapp.get_contact_info", "args": {"contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp get contact info heuristic -> {contact}")
+                    return heuristic, raw, prompt
+            
+            # Open/initialize WhatsApp
+            if any(word in g for word in ["open", "start", "launch", "initialize"]):
+                heuristic = [{"tool": "whatsapp.initialize", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using WhatsApp initialize heuristic")
+                return heuristic, raw, prompt
+
+        if ("message" in g or "dm" in g or "text" in g) and (" to " in g or " @" in g):
+            mname = re.search(r"(?:message|dm|text)\s+([@#]?\w+)", goal, re.IGNORECASE)
+            contact = mname.group(1) if mname else "contact"
+            mbody = re.search(r"(?:saying|with|that)\s+\"([^\"]+)\"", goal, re.IGNORECASE)
+            body = mbody.group(1) if mbody else "Hello"
+            heuristic = [{"tool": "messaging.send_to_contact", "args": {"name": contact, "message": body}}]
+            raw = json.dumps(heuristic)
+            print("[Planner] Using messaging heuristic")
+            return heuristic, raw, prompt
+
+        # Heuristic: web search intent -> clean query; optionally save to file
+        search_match = re.search(r"(?:search for|search about|google|lookup|find)\s+(.+)", goal, re.IGNORECASE)
+        if search_match:
+            query_raw = search_match.group(1).strip()
+            should_save = "save" in goal.lower() or "notepad" in goal.lower() or "file" in goal.lower()
+            # Truncate at common follow-ups
+            query_raw = re.split(r"\s+and\s+save|\s+then\s+save|\s+and\s+summarize|\s+save\b", query_raw, maxsplit=1)[0].strip()
+            # Remove trailing punctuation/quotes
+            query_raw = query_raw.strip("\"' .,")
+            query_enc = quote_plus(query_raw) if query_raw else quote_plus(goal)
+            heuristic = [{"tool": "web.fetch", "args": {"url": f"https://www.google.com/search?q={query_enc}"}}]
+            # If user wants to save, append a file creation step with a descriptive filename
+            if should_save:
+                safe_query = re.sub(r"[^a-z0-9_\-]", "_", query_raw.lower())[:50]
+                heuristic.append({
+                    "tool": "filesystem.create_file",
+                    "args": {
+                        "filename": f"{safe_query}_results.txt",
+                        "content": f"Search results for '{query_raw}'\n\nTo view full results, visit:\nhttps://www.google.com/search?q={query_enc}"
+                    }
+                })
+            raw = json.dumps(heuristic)
+            print(f"[Planner] Using search heuristic -> {query_raw}" + (" (with save)" if should_save else ""))
+            return heuristic, raw, prompt
+
         # Heuristic: read Notepad content for "what's on my screen"/define/read/summarize intents
-        g_screen = goal.lower()
+        g_screen = g
         if ("notepad" in g_screen) and (
             "what is on my screen" in g_screen or
             "what's on my screen" in g_screen or

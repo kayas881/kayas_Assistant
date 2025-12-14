@@ -297,6 +297,14 @@ def jira_config() -> dict:
     }
 
 
+def whatsapp_config() -> dict:
+    return {
+        "session_dir": env_str("WHATSAPP_SESSION_DIR", str(profile_get("apis.whatsapp.session_dir", ".agent/whatsapp_session"))),
+        "headless": env_str("WHATSAPP_HEADLESS", str(profile_get("apis.whatsapp.headless", "false"))).lower() in ("1", "true", "yes"),
+        "timeout_ms": int(env_str("WHATSAPP_TIMEOUT_MS", str(profile_get("apis.whatsapp.timeout_ms", "30000")))),
+    }
+
+
 # Desktop automation (dangerous, off by default)
 def desktop_enabled() -> bool:
     # Enable only if explicitly set: env DESKTOP_AUTOMATION_ENABLED=1 or profile desktop.enabled: true

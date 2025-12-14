@@ -12,7 +12,7 @@ from ..agent.config import (
     artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, 
     search_root, smtp_config, google_calendar_config, slack_config, 
     spotify_config, desktop_enabled, github_config, notion_config,
-    trello_config, jira_config, planning_mode, llm_backend,
+    trello_config, jira_config, whatsapp_config, planning_mode, llm_backend,
     hf_base_model, hf_merged_model_dir, hf_adapter_dir, hf_use_4bit
 )
 from ..agent.llm import LLM
@@ -36,6 +36,7 @@ from ..executors.github_exec import GithubExecutor, GithubConfig
 from ..executors.notion_exec import NotionExecutor, NotionConfig
 from ..executors.trello_exec import TrelloExecutor, TrelloConfig
 from ..executors.jira_exec import JiraExecutor, JiraConfig
+from ..executors.whatsapp_exec import WhatsAppExecutor, WhatsAppConfig
 from ..executors.image_exec import ImageProcessingExecutor, ImageConfig
 from ..executors.audio_exec import AudioExecutor, AudioConfig
 from ..executors.video_exec import VideoExecutor, VideoConfig
@@ -158,6 +159,15 @@ class DirectAgent:
         except Exception:
             self.jira_exec = None
         
+        # WhatsApp Web automation (always available - uses Playwright)
+        try:
+            cfg = whatsapp_config()
+            self.whatsapp_exec = WhatsAppExecutor(WhatsAppConfig(**cfg))
+            print("[DirectAgent] WhatsApp executor initialized")
+        except Exception as e:
+            print(f"[DirectAgent] WhatsApp executor not available: {e}")
+            self.whatsapp_exec = None
+        
         # Media processing executors (always available)
         self.image_exec = ImageProcessingExecutor(ImageConfig())
         self.audio_exec = AudioExecutor(AudioConfig())
@@ -211,6 +221,7 @@ class DirectAgent:
             "ocr": self.ocr_exec,
             "cv": self.cv_exec,
             "perception": self.perception,
+            "whatsapp": self.whatsapp_exec,
         })
         
         # Initialize ReAct agent (for multi-step reasoning)
@@ -330,6 +341,7 @@ class DirectAgent:
             if wait_match:
                 wait_ms = max(1000, min(30000, int(wait_match.group(1)) * 1000))
 
+            selection_window: Optional[str] = None
             selection_match = re.search(
                 r"(?:select|click\s+(?:on\s+)?|find)\s+(?:the\s+)?['\"]?([^'\"\n]+)['\"]?(?:\s+(?:account|button|profile|option|menu))?",
                 goal,
@@ -337,19 +349,33 @@ class DirectAgent:
             )
             selection_target = selection_match.group(1).strip(" '\"") if selection_match else None
             print(f"DEBUG: selection_match = {selection_match}, selection_target = {selection_target}")
+            skip_selection_click = False
             if selection_target:
-                if "chrome" in goal_lower:
-                    selection_window = "Google Chrome"
-                elif "edge" in goal_lower:
-                    selection_window = "Microsoft Edge"
-                elif "whatsapp" in goal_lower:
-                    selection_window = "WhatsApp"
-                elif "discord" in goal_lower:
-                    selection_window = "Discord"
+                # Deterministic Chrome profile selection bypasses perception
+                if "chrome" in goal_lower and "profile" in selection_target.lower():
+                    profile_map = {
+                        "kayas": "profile 2",
+                        "kayas profile": "profile 2",
+                        "kayass": "profile 2",
+                    }
+                    key = selection_target.lower()
+                    profile_name = profile_map.get(key, selection_target)
+                    heuristic_plan = [{"tool": "browser.open_chrome_profile", "args": {"profile_name": profile_name}}]
+                    selection_window = None
+                    skip_selection_click = True
+                else:
+                    if "chrome" in goal_lower:
+                        selection_window = "Google Chrome"
+                    elif "edge" in goal_lower:
+                        selection_window = "Microsoft Edge"
+                    elif "whatsapp" in goal_lower:
+                        selection_window = "WhatsApp"
+                    elif "discord" in goal_lower:
+                        selection_window = "Discord"
             
-            if "cpu" in goal_lower or "memory" in goal_lower or "system" in goal_lower:
+            if heuristic_plan is None and ("cpu" in goal_lower or "memory" in goal_lower or "system" in goal_lower):
                 heuristic_plan = [{"tool": "process.get_system_info", "args": {}}]
-            elif goal_lower.startswith("open ") or (" open " in goal_lower):
+            elif heuristic_plan is None and (goal_lower.startswith("open ") or (" open " in goal_lower)):
                 # Try to resolve app name to a program path
                 import os
                 import glob
@@ -479,7 +505,7 @@ class DirectAgent:
                     "args": {"context": {}}
                 }]
 
-            if selection_target:
+            if selection_target and not skip_selection_click:
                 selection_context: Dict[str, Any] = {"take_screenshot": True}
                 if selection_window:
                     selection_context["window_title"] = selection_window
@@ -563,6 +589,11 @@ class DirectAgent:
             
             # Detect if this is a multi-step task that needs continuation logic
             is_multistep = self._is_multistep_task(goal)
+            # If the plan is a single deterministic launcher, avoid multi-step continuation
+            if plan.get("actions") and len(plan["actions"]) == 1:
+                lone_tool = plan["actions"][0].get("tool")
+                if lone_tool == "browser.open_chrome_profile":
+                    is_multistep = False
             
             if is_multistep:
                 print(f"[DirectAgent] Using multi-step runner for task: {goal}")
@@ -883,6 +914,18 @@ Just ask me naturally, like you would a friend! For example:
         if not results:
             return "I went ahead and did what you asked, but there's no specific data to show you. Everything should be set!"
         
+        # Check for WhatsApp QR scan needed - this is a special case, not a failure
+        for r in results:
+            if r.get("needs_qr_scan"):
+                return (
+                    "📱 **WhatsApp Web needs you to log in!**\n\n"
+                    "I've opened a browser window with WhatsApp Web. Please:\n"
+                    "1. Open WhatsApp on your phone\n"
+                    "2. Go to Settings → Linked Devices → Link a Device\n"
+                    "3. Scan the QR code shown in the browser\n\n"
+                    "Once you're logged in, try your command again!"
+                )
+        
         # Count successful vs failed actions
         successful = [r for r in results if r.get("success", True) and "error" not in r]
         failed = [r for r in results if not r.get("success", True) or "error" in r]
@@ -890,16 +933,23 @@ Just ask me naturally, like you would a friend! For example:
         if failed and not successful:
             # All failed - be more helpful and conversational
             error_msg = failed[0].get("error", "Unknown error")
-            tool = failed[0].get("tool", "unknown tool")
+            # Try to get tool from result, or from action field
+            tool = failed[0].get("tool") or failed[0].get("action", "unknown tool")
             
             response = (
                 f"Ugh, I ran into an issue trying to do that. Here's what went wrong:\n\n"
                 f"**Problem:** {error_msg}\n\n"
-                f"**What I tried:** I attempted to use the '{tool}' executor, but it didn't work out.\n\n"
             )
             
-            # Add helpful suggestions based on the tool
-            if "process" in tool:
+            # Add helpful suggestions based on the tool or error content
+            if "whatsapp" in tool.lower() or "whatsapp" in error_msg.lower():
+                if "qr" in error_msg.lower() or "scan" in error_msg.lower() or "log in" in error_msg.lower():
+                    response += "You need to scan the QR code in the browser window with your phone's WhatsApp app to log in."
+                elif "contact" in error_msg.lower() or "not found" in error_msg.lower():
+                    response += "Make sure the contact name matches exactly what's in your WhatsApp chats."
+                else:
+                    response += "WhatsApp Web automation requires Playwright. Try 'pip install playwright && python -m playwright install chromium'."
+            elif "process" in tool:
                 response += "This is usually a permissions issue or the psutil library might not be working correctly."
             elif "clipboard" in tool:
                 response += "Clipboard operations can be tricky on Windows. Make sure pywin32 is installed correctly."
@@ -907,6 +957,13 @@ Just ask me naturally, like you would a friend! For example:
                 response += "Network operations might be blocked by a firewall or you might be offline."
             elif "llm" in tool:
                 response += "The LLM executor might need an Ollama model running. Try 'ollama pull llama3.1' if you haven't already."
+            elif "whatsapp" in tool:
+                if "qr" in error_msg.lower() or "scan" in error_msg.lower():
+                    response += "You need to scan the QR code in the browser window with your phone's WhatsApp app to log in."
+                elif "contact" in error_msg.lower() or "not found" in error_msg.lower():
+                    response += "Make sure the contact name matches exactly what's in your WhatsApp chats."
+                else:
+                    response += "WhatsApp Web automation requires Playwright. Try 'pip install playwright && python -m playwright install chromium'."
             else:
                 response += "Check the console for more technical details, or we might need to debug this together!"
             
@@ -945,6 +1002,38 @@ Just ask me naturally, like you would a friend! For example:
                 
                 elif "browser" in action:
                     response_parts.append("I completed the browser automation")
+                
+                elif "whatsapp" in action:
+                    # WhatsApp-specific responses
+                    if "send_message" in action:
+                        contact = result.get("contact", "")
+                        msg = result.get("message", "")
+                        response_parts.append(f"I sent your message to {contact} on WhatsApp: \"{msg}\"")
+                    elif "read_messages" in action:
+                        messages = result.get("messages", [])
+                        contact = result.get("contact", "")
+                        if messages:
+                            response_parts.append(f"Here are the recent messages from {contact}:")
+                            for m in messages[:5]:
+                                direction = "Them" if m.get("incoming") else "You"
+                                response_parts.append(f"  {direction}: {m.get('text', '')[:100]}")
+                        else:
+                            response_parts.append(f"No recent messages found from {contact}")
+                    elif "get_unread_chats" in action:
+                        chats = result.get("chats", [])
+                        if chats:
+                            response_parts.append(f"You have {len(chats)} unread chat(s):")
+                            for c in chats[:5]:
+                                response_parts.append(f"  - {c.get('name', 'Unknown')}: {c.get('unread_count', 1)} message(s)")
+                        else:
+                            response_parts.append("No unread messages on WhatsApp!")
+                    elif "initialize" in action:
+                        if result.get("needs_qr_scan"):
+                            response_parts.append("WhatsApp Web is open. Please scan the QR code with your phone to log in.")
+                        else:
+                            response_parts.append("WhatsApp Web is ready!")
+                    else:
+                        response_parts.append("WhatsApp action completed")
                 
                 else:
                     # For other actions, try to extract meaningful info from the result

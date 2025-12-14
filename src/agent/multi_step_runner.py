@@ -120,6 +120,13 @@ class MultiStepRunner:
         # Execute steps in a loop
         while context.current_step < context.max_steps and not context.completed:
             context.current_step += 1
+
+            # Hard stop to avoid runaway loops
+            if context.current_step > 15:
+                context.completed = False
+                context.forced_stop = True
+                context.completion_reason = "Max steps exceeded (hard limit 15)."
+                break
             
             print(f"\n--- Step {context.current_step} ---")
             
@@ -258,6 +265,15 @@ class MultiStepRunner:
         state_info = state_snapshot or "State information unavailable"
         recent_steps = self._format_recent_steps(executed_steps)
         conversation_text = self._format_conversation_history(conversation_history)
+
+        # Additional deterministic context for the LLM
+        process_list = self._get_process_list()
+        continuation_context = (
+            f"Current state: {process_list}\n"
+            f"Last N actions: {recent_steps}\n"
+            f"Task: {goal}\n\n"
+            "Should we continue or mark as complete?"
+        )
         
         # Create a continuation prompt
         prompt = f"""
@@ -270,6 +286,9 @@ Conversation context:
 
 Recent actions:
 {recent_steps}
+
+Deterministic context:
+{continuation_context}
 
 Execution trace (JSON):
 {step_summary}
@@ -318,15 +337,16 @@ IMPORTANT:
             reasoning = decision.get("reasoning", "No reasoning provided")
             next_steps = decision.get("next_steps")
             
-            # If completed or no next steps, we're done
+            # If the model provided next_steps, honor them regardless of the completed flag
+            if next_steps and len(next_steps) > 0:
+                # Treat as continuation required; model may optimistically set completed=true
+                return True, next_steps, reasoning, False
+
+            # Otherwise rely on completed flag
             if completed or next_steps is None:
                 return False, None, reasoning, False
             
-            # Otherwise, return the next plan
-            if next_steps and len(next_steps) > 0:
-                return True, next_steps, reasoning, False
-            else:
-                return False, None, reasoning or "Task appears complete", False
+            return False, None, reasoning or "Task appears complete", False
         
         except Exception as e:
             # If there's an error getting continuation, assume we're done
@@ -361,6 +381,13 @@ IMPORTANT:
         
         success_count = sum(1 for s in context.executed_steps if s.success)
         total_count = len(context.executed_steps)
+        failed_steps = [s for s in context.executed_steps if not s.success]
+        failure_detail = ""
+        if failed_steps:
+            last_fail = failed_steps[-1]
+            fail_tool = last_fail.action.get("tool", last_fail.action.get("action", "unknown"))
+            fail_msg = last_fail.error or self._shorten_output(last_fail.output)
+            failure_detail = f" Failed at step {last_fail.step_number} ({fail_tool}): {fail_msg}."
         
         if context.completed:
             if context.forced_stop:
@@ -372,8 +399,8 @@ IMPORTANT:
             if success_count == total_count:
                 return f"Done! I completed your request: {goal}. {context.completion_reason or ''}".strip()
             return (
-                f"I mostly completed your request ({success_count}/{total_count} steps succeeded). "
-                f"{context.completion_reason or ''}".strip()
+                f"I completed {success_count} of {total_count} steps for '{goal}'."
+                f"{failure_detail or (' ' + (context.completion_reason or ''))}"
                 )
         else:
             return (
@@ -438,6 +465,16 @@ IMPORTANT:
 
         context.state_snapshot = f"{process_summary}\n{last_action_summary}"
 
+    def _get_process_list(self) -> str:
+        try:
+            state = self.router.route({"tool": "process.list_processes", "args": {}})
+            if isinstance(state, dict) and state.get("processes"):
+                names = [proc.get("name", "unknown") for proc in state.get("processes", [])[:8]]
+                return ", ".join(names) or "none"
+        except Exception:
+            return "unavailable"
+        return "unavailable"
+
     def _log_continuation_output(self, response: str) -> None:
         try:
             log_path = Path("logs") / "continuations.log"
@@ -450,6 +487,8 @@ IMPORTANT:
 
     def _parse_continuation_response(self, response: str) -> Optional[Dict[str, Any]]:
         cleaned = response.replace("```json", "").replace("```", "").strip()
+        # Strip JavaScript-style comments that models sometimes emit
+        cleaned = re.sub(r"//.*", "", cleaned)
         candidate = self._extract_json_block(cleaned)
         candidates = [c for c in (candidate, cleaned) if c]
         for cand in candidates:
