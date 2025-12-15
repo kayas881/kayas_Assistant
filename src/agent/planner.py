@@ -71,6 +71,7 @@ STRUCTURED_SYSTEM = (
     "{\"tool\": \"uia.type_text\", \"args\": {\"window_title\": \"Notepad\", \"text\": \"hello world\"}}]\n\n"
     "Available tools:\n"
     "- filesystem.create_file {filename, content?}\n"
+    "- filesystem.create_folder {path}\n"
     "- filesystem.append_file {filename, content}\n"
     "- web.fetch {url}\n"
     "- email.send {to, subject, body}\n"
@@ -190,6 +191,42 @@ STRUCTURED_SYSTEM = (
     "- whatsapp.send_contact {to_contact, share_contact} (share a contact with someone)\n"
     "- whatsapp.screenshot {filename?} (screenshot current WhatsApp Web state)\n"
     "- whatsapp.close {} (close the browser)\n"
+    "File Explorer automation (Windows Explorer control):\n"
+    "- explorer.open {path?} (open File Explorer, optionally at a path)\n"
+    "- explorer.navigate {path} (navigate current explorer to a path)\n"
+    "- explorer.close {} (close explorer window)\n"
+    "- explorer.create_folder {name, path?} (create a new folder)\n"
+    "- explorer.create_file {name, file_type?, path?} (create new file via context menu)\n"
+    "- explorer.select_file {name} (select a file/folder by name)\n"
+    "- explorer.select_all {} (select all items)\n"
+    "- explorer.copy {} (copy selected items)\n"
+    "- explorer.cut {} (cut selected items)\n"
+    "- explorer.paste {} (paste from clipboard)\n"
+    "- explorer.rename {old_name, new_name} (rename a file/folder)\n"
+    "- explorer.delete {name?, permanent?} (delete selected/named item)\n"
+    "- explorer.open_file {name} (open file with default app)\n"
+    "- explorer.properties {name?} (show properties dialog)\n"
+    "- explorer.back {} (navigate back)\n"
+    "- explorer.forward {} (navigate forward)\n"
+    "- explorer.up {} (go to parent folder)\n"
+    "- explorer.refresh {} (refresh current view)\n"
+    "- explorer.set_view {mode} (details, list, tiles, large_icons, etc.)\n"
+    "- explorer.search {query, path?} (search for files)\n"
+    "- explorer.quick_access {} (go to Quick Access)\n"
+    "- explorer.this_pc {} (go to This PC)\n"
+    "- explorer.desktop {} (go to Desktop folder)\n"
+    "- explorer.documents {} (go to Documents)\n"
+    "- explorer.downloads {} (go to Downloads)\n"
+    "- explorer.pictures {} (go to Pictures)\n"
+    "- explorer.recycle_bin {} (go to Recycle Bin)\n"
+    "- explorer.copy_path {name?} (copy path to clipboard)\n"
+    "- explorer.open_terminal {path?} (open terminal here)\n"
+    "- explorer.undo {} (undo last action)\n"
+    "- explorer.list {path} (list folder contents directly, no UI)\n"
+    "- explorer.file_info {path} (get file/folder info directly)\n"
+    "- explorer.move {source, destination} (move file/folder directly)\n"
+    "- explorer.copy_file {source, destination} (copy file/folder directly)\n"
+    "- explorer.delete_direct {path, permanent?} (delete directly, no UI)\n"
     "Rules: prefer minimal steps; don't repeat work; use append_file not create if file already exists (if told). "
     "Prefer smart-default tools for known apps (Chrome profiles, Spotify launch, messaging) before using perception.* or generic clicks. "
     "For WhatsApp tasks, use whatsapp.* tools directly - they are more reliable than browser automation. "
@@ -231,6 +268,145 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             ]
             raw = json.dumps(heuristic)
             print("[Planner] Using Spotify heuristic")
+            return heuristic, raw, prompt
+
+        # ========== FILE EXPLORER HEURISTICS (early match before LLM fallback) ==========
+        explorer_keywords = ["explorer", "file explorer", "folder", "directory", "files", "this pc", "my computer"]
+        is_explorer_intent = any(kw in g for kw in explorer_keywords)
+        
+        # Open specific folders (downloads, documents, desktop, etc.)
+        # Do NOT let navigation heuristics steal create-folder requests.
+        if (is_explorer_intent or any(word in g for word in ["open", "go to", "show", "navigate"])) and "create" not in g and "make" not in g:
+            # Quick access locations - check these FIRST
+            if "download" in g:
+                heuristic = [{"tool": "explorer.downloads", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer downloads heuristic")
+                return heuristic, raw, prompt
+            
+            if "document" in g and "send" not in g:  # avoid matching "send document"
+                heuristic = [{"tool": "explorer.documents", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer documents heuristic")
+                return heuristic, raw, prompt
+            
+            if "desktop" in g and "folder" in g:
+                heuristic = [{"tool": "explorer.desktop", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer desktop heuristic")
+                return heuristic, raw, prompt
+            
+            if "picture" in g or "photo" in g:
+                heuristic = [{"tool": "explorer.pictures", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer pictures heuristic")
+                return heuristic, raw, prompt
+            
+            if "music" in g:
+                heuristic = [{"tool": "explorer.music", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer music heuristic")
+                return heuristic, raw, prompt
+            
+            if "video" in g and "send" not in g:  # avoid matching "send video"
+                heuristic = [{"tool": "explorer.videos", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer videos heuristic")
+                return heuristic, raw, prompt
+            
+            if "recycle" in g or "trash" in g or "bin" in g:
+                heuristic = [{"tool": "explorer.recycle_bin", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer recycle bin heuristic")
+                return heuristic, raw, prompt
+            
+            if "quick access" in g:
+                heuristic = [{"tool": "explorer.quick_access", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer quick access heuristic")
+                return heuristic, raw, prompt
+            
+            if "this pc" in g or "my computer" in g:
+                heuristic = [{"tool": "explorer.this_pc", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer this pc heuristic")
+                return heuristic, raw, prompt
+            
+            # Open specific path (e.g., "open C:\Users\..." or "go to D:\Projects")
+            path_match = re.search(r'(?:open|go to|navigate to|show)\s+([A-Za-z]:\\[^\s]+|[A-Za-z]:/[^\s]+)', goal, re.IGNORECASE)
+            if path_match:
+                path = path_match.group(1).strip()
+                heuristic = [{"tool": "explorer.open", "args": {"path": path}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using Explorer open path heuristic -> {path}")
+                return heuristic, raw, prompt
+            
+            # Generic "open file explorer" or "open explorer"
+            if "explorer" in g and any(word in g for word in ["open", "start", "launch"]):
+                heuristic = [{"tool": "explorer.open", "args": {}}]
+                raw = json.dumps(heuristic)
+                print("[Planner] Using Explorer open heuristic")
+                return heuristic, raw, prompt
+
+        # Create-folder heuristic
+        # - If the user specifies an absolute Windows path (e.g., "in C:\\Users"), create it there via explorer.
+        # - Otherwise, create it under the artifacts root via filesystem.
+        if ("create" in g or "make" in g) and ("folder" in g or "directory" in g):
+            # Optional trailing location: allow drive letters (:) and backslashes.
+            in_match = re.search(r"\b(?:in|inside|under)\s+([A-Za-z0-9_./\\:\- ]+)$", goal, re.IGNORECASE)
+            subpath = in_match.group(1).strip().strip("\"'") if in_match else ""
+            goal_no_loc = goal[: in_match.start()].strip() if in_match else goal
+
+            folder_name: str | None = None
+            # Prefer explicit quoted names.
+            m = re.search(
+                r"\b(?:folder|directory)\b\s*(?:named|called)?\s*[\"']([^\"']+)[\"']\s*$",
+                goal_no_loc,
+                re.IGNORECASE,
+            )
+            if m:
+                folder_name = m.group(1).strip()
+            if not folder_name:
+                # Unquoted single-token names.
+                m = re.search(
+                    r"\b(?:folder|directory)\b\s*(?:named|called)?\s*([A-Za-z0-9_.\-]+)\s*$",
+                    goal_no_loc,
+                    re.IGNORECASE,
+                )
+                if m:
+                    folder_name = m.group(1).strip()
+            if not folder_name:
+                # Fallback: "named X" / "called X"
+                m = re.search(r"\b(?:named|called)\s+[\"']?([^\"']+)[\"']?\s*$", goal_no_loc, re.IGNORECASE)
+                if m:
+                    folder_name = m.group(1).strip()
+
+            folder_name = (folder_name or "New Folder").strip(" .\t\n\r")
+
+            # Absolute destination: create directly there.
+            subpath_norm = subpath.strip()
+            is_absolute_dest = bool(re.match(r"^[A-Za-z]:[\\/]", subpath_norm)) or subpath_norm.startswith("\\\\")
+            known_locations = {
+                "desktop",
+                "downloads",
+                "documents",
+                "pictures",
+                "music",
+                "videos",
+            }
+            is_known_location = subpath_norm.lower() in known_locations
+
+            if subpath_norm and (is_absolute_dest or is_known_location):
+                heuristic = [{"tool": "explorer.create_folder", "args": {"name": folder_name, "path": subpath_norm}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using explorer.create_folder heuristic -> {subpath_norm}\\{folder_name}")
+                return heuristic, raw, prompt
+
+            # Relative destination: interpret as artifacts subpath.
+            rel_path = folder_name if not subpath_norm else str(Path(subpath_norm) / folder_name)
+            heuristic = [{"tool": "filesystem.create_folder", "args": {"path": rel_path}}]
+            raw = json.dumps(heuristic)
+            print(f"[Planner] Using filesystem.create_folder heuristic -> {rel_path}")
             return heuristic, raw, prompt
 
         # Image/video/file sending heuristics (even without "whatsapp" keyword)

@@ -4,7 +4,6 @@ Direct agent wrapper that integrates all tools without HTTP calls.
 from __future__ import annotations
 
 from typing import Dict, Any, List, Optional
-from pathlib import Path
 import uuid
 import re
 
@@ -37,6 +36,7 @@ from ..executors.notion_exec import NotionExecutor, NotionConfig
 from ..executors.trello_exec import TrelloExecutor, TrelloConfig
 from ..executors.jira_exec import JiraExecutor, JiraConfig
 from ..executors.whatsapp_exec import WhatsAppExecutor, WhatsAppConfig
+from ..executors.explorer_exec import ExplorerExecutor, ExplorerConfig
 from ..executors.image_exec import ImageProcessingExecutor, ImageConfig
 from ..executors.audio_exec import AudioExecutor, AudioConfig
 from ..executors.video_exec import VideoExecutor, VideoConfig
@@ -168,6 +168,14 @@ class DirectAgent:
             print(f"[DirectAgent] WhatsApp executor not available: {e}")
             self.whatsapp_exec = None
         
+        # File Explorer automation (always available on Windows)
+        try:
+            self.explorer_exec = ExplorerExecutor(ExplorerConfig())
+            print("[DirectAgent] Explorer executor initialized")
+        except Exception as e:
+            print(f"[DirectAgent] Explorer executor not available: {e}")
+            self.explorer_exec = None
+        
         # Media processing executors (always available)
         self.image_exec = ImageProcessingExecutor(ImageConfig())
         self.audio_exec = AudioExecutor(AudioConfig())
@@ -222,6 +230,7 @@ class DirectAgent:
             "cv": self.cv_exec,
             "perception": self.perception,
             "whatsapp": self.whatsapp_exec,
+            "explorer": self.explorer_exec,
         })
         
         # Initialize ReAct agent (for multi-step reasoning)
@@ -375,6 +384,29 @@ class DirectAgent:
             
             if heuristic_plan is None and ("cpu" in goal_lower or "memory" in goal_lower or "system" in goal_lower):
                 heuristic_plan = [{"tool": "process.get_system_info", "args": {}}]
+            
+            # ========== FILE EXPLORER HEURISTICS (check before generic open) ==========
+            elif heuristic_plan is None and ("download" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower)):
+                heuristic_plan = [{"tool": "explorer.downloads", "args": {}}]
+            elif heuristic_plan is None and ("document" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower) and "send" not in goal_lower):
+                heuristic_plan = [{"tool": "explorer.documents", "args": {}}]
+            elif heuristic_plan is None and ("desktop" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
+                heuristic_plan = [{"tool": "explorer.desktop", "args": {}}]
+            elif heuristic_plan is None and (("picture" in goal_lower or "photo" in goal_lower) and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower)):
+                heuristic_plan = [{"tool": "explorer.pictures", "args": {}}]
+            elif heuristic_plan is None and ("music" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
+                heuristic_plan = [{"tool": "explorer.music", "args": {}}]
+            elif heuristic_plan is None and ("video" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
+                heuristic_plan = [{"tool": "explorer.videos", "args": {}}]
+            elif heuristic_plan is None and ("recycle" in goal_lower or "trash" in goal_lower or ("bin" in goal_lower and "recycle" in goal_lower)):
+                heuristic_plan = [{"tool": "explorer.recycle_bin", "args": {}}]
+            elif heuristic_plan is None and "quick access" in goal_lower:
+                heuristic_plan = [{"tool": "explorer.quick_access", "args": {}}]
+            elif heuristic_plan is None and ("this pc" in goal_lower or "my computer" in goal_lower):
+                heuristic_plan = [{"tool": "explorer.this_pc", "args": {}}]
+            elif heuristic_plan is None and ("file explorer" in goal_lower or ("explorer" in goal_lower and "open" in goal_lower and "internet" not in goal_lower)):
+                heuristic_plan = [{"tool": "explorer.open", "args": {}}]
+            
             elif heuristic_plan is None and (goal_lower.startswith("open ") or (" open " in goal_lower)):
                 # Try to resolve app name to a program path
                 import os
@@ -996,9 +1028,24 @@ Just ask me naturally, like you would a friend! For example:
                 elif "filesystem" in action:
                     path = result.get("path", "")
                     if path:
-                        response_parts.append(f"I created a file at {path}")
+                        if "create_folder" in action:
+                            response_parts.append(f"I created a folder at {path}")
+                        elif "create_file" in action:
+                            response_parts.append(f"I created a file at {path}")
+                        else:
+                            response_parts.append(f"I completed the filesystem operation at {path}")
                     else:
                         response_parts.append("I completed the file operation")
+
+                elif action.startswith("explorer.create_folder"):
+                    folder = result.get("folder", "")
+                    note = result.get("note", "")
+                    if folder:
+                        response_parts.append(f"I created a folder at {folder}")
+                    else:
+                        response_parts.append("I created the folder")
+                    if note:
+                        response_parts.append(note)
                 
                 elif "browser" in action:
                     response_parts.append("I completed the browser automation")

@@ -167,6 +167,10 @@ class Router:
 
             if t == "filesystem.create_file":
                 return self.executors["fs"].create_file(a.get("filename", "notes.txt"), a.get("content", ""))
+            if t == "filesystem.create_folder":
+                # Prefer 'path'; accept 'folder'/'name' for convenience
+                folder = a.get("path") or a.get("folder") or a.get("name")
+                return self.executors["fs"].create_folder(folder or "new_folder")
             if t == "filesystem.append_file":
                 return self.executors["fs"].append_file(a.get("filename", "notes.txt"), a.get("content", ""))
             if t == "filesystem.delete_file":
@@ -756,6 +760,100 @@ class Router:
                     )
                 if t == "whatsapp.close":
                     return wa.close()
+            
+            # File Explorer automation
+            if t.startswith("explorer."):
+                exp = self.executors.get("explorer")
+                if not exp:
+                    return {"error": "Explorer executor not available", "tool": t}
+                if t == "explorer.open":
+                    return exp.open_explorer(path=a.get("path"))
+                if t == "explorer.navigate":
+                    return exp.navigate_to(path=a["path"])
+                if t == "explorer.close":
+                    return exp.close_explorer()
+                if t == "explorer.create_folder":
+                    return exp.create_folder(name=a["name"], path=a.get("path"))
+                if t == "explorer.create_file":
+                    return exp.create_file(
+                        name=a["name"],
+                        file_type=a.get("file_type", "txt"),
+                        path=a.get("path")
+                    )
+                if t == "explorer.select_file":
+                    return exp.select_file(name=a["name"])
+                if t == "explorer.select_files":
+                    return exp.select_files(names=a["names"])
+                if t == "explorer.select_all":
+                    return exp.select_all()
+                if t == "explorer.copy":
+                    return exp.copy_selected()
+                if t == "explorer.cut":
+                    return exp.cut_selected()
+                if t == "explorer.paste":
+                    return exp.paste()
+                if t == "explorer.rename":
+                    return exp.rename(old_name=a["old_name"], new_name=a["new_name"])
+                if t == "explorer.delete":
+                    return exp.delete(name=a.get("name"), permanent=a.get("permanent", False))
+                if t == "explorer.open_file":
+                    return exp.open_file(name=a["name"])
+                if t == "explorer.properties":
+                    return exp.show_properties(name=a.get("name"))
+                if t == "explorer.back":
+                    return exp.go_back()
+                if t == "explorer.forward":
+                    return exp.go_forward()
+                if t == "explorer.up":
+                    return exp.go_up()
+                if t == "explorer.refresh":
+                    return exp.refresh()
+                if t == "explorer.set_view":
+                    return exp.set_view(mode=a["mode"])
+                if t == "explorer.toggle_preview":
+                    return exp.toggle_preview_pane()
+                if t == "explorer.toggle_details":
+                    return exp.toggle_details_pane()
+                if t == "explorer.search":
+                    return exp.search(query=a["query"], path=a.get("path"))
+                if t == "explorer.quick_access":
+                    return exp.go_to_quick_access()
+                if t == "explorer.this_pc":
+                    return exp.go_to_this_pc()
+                if t == "explorer.desktop":
+                    return exp.go_to_desktop()
+                if t == "explorer.documents":
+                    return exp.go_to_documents()
+                if t == "explorer.downloads":
+                    return exp.go_to_downloads()
+                if t == "explorer.pictures":
+                    return exp.go_to_pictures()
+                if t == "explorer.music":
+                    return exp.go_to_music()
+                if t == "explorer.videos":
+                    return exp.go_to_videos()
+                if t == "explorer.recycle_bin":
+                    return exp.go_to_recycle_bin()
+                if t == "explorer.copy_path":
+                    return exp.copy_path(name=a.get("name"))
+                if t == "explorer.open_terminal":
+                    return exp.open_in_terminal(path=a.get("path"))
+                if t == "explorer.undo":
+                    return exp.undo()
+                if t == "explorer.redo":
+                    return exp.redo()
+                if t == "explorer.list":
+                    return exp.list_contents(path=a["path"])
+                if t == "explorer.file_info":
+                    return exp.get_file_info(path=a["path"])
+                if t == "explorer.create_folder_direct":
+                    return exp.create_folder_direct(path=a["path"])
+                if t == "explorer.move":
+                    return exp.move_file(source=a["source"], destination=a["destination"])
+                if t == "explorer.copy_file":
+                    return exp.copy_file(source=a["source"], destination=a["destination"])
+                if t == "explorer.delete_direct":
+                    return exp.delete_file_direct(path=a["path"], permanent=a.get("permanent", False))
         except Exception as e:
             return {"error": str(e), "tool": t, "args": a}
         return {"error": f"Unknown tool: {t}", "args": a}

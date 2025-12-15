@@ -28,6 +28,7 @@ from ..executors.perception_executor import PerceptionExecutor, PerceptionExecut
 from ..executors.calendar_exec import GoogleCalendarExecutor, CalendarConfig
 from ..executors.slack_exec import SlackExecutor, SlackConfig  
 from ..executors.spotify_exec import SpotifyExecutor, SpotifyConfig
+from ..executors.explorer_exec import ExplorerExecutor, ExplorerConfig
 from ..memory.sqlite_memory import MemoryConfig, SQLiteMemory
 from ..memory.vector_memory import VectorMemory, VectorMemoryConfig
 from ..training.preference_model import score_plan
@@ -75,6 +76,12 @@ def run_agent(goal: str) -> Dict[str, str]:
         perception_exec = PerceptionExecutor(PerceptionExecutorConfig())
     except Exception:
         perception_exec = None
+    
+    # File Explorer automation
+    try:
+        explorer_exec = ExplorerExecutor(ExplorerConfig())
+    except Exception:
+        explorer_exec = None
     
     # API integrations - only create if credentials are available
     try:
@@ -139,6 +146,8 @@ def run_agent(goal: str) -> Dict[str, str]:
             router_executors["uia"] = uia_exec
         if perception_exec:
             router_executors["perception"] = perception_exec
+        if explorer_exec:
+            router_executors["explorer"] = explorer_exec
         router = Router(router_executors, safety=SafetyPolicy())
         ra = ReactAgent(llm, router)
         rr = ra.run(goal, max_steps=react_max_steps(), beam_width=react_beam_width())
@@ -203,6 +212,8 @@ def run_agent(goal: str) -> Dict[str, str]:
         router_executors["uia"] = uia_exec
     if perception_exec:
         router_executors["perception"] = perception_exec
+    if explorer_exec:
+        router_executors["explorer"] = explorer_exec
         
     router = Router(router_executors, safety=SafetyPolicy())
 

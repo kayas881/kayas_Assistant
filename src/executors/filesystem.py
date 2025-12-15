@@ -20,8 +20,30 @@ class FileSystemExecutor:
         self.cfg = cfg
         self.cfg.root.mkdir(parents=True, exist_ok=True)
 
+    def _sanitize_user_path(self, name: str) -> str:
+        """Sanitize LLM/user-provided path fragments.
+
+        The LLM sometimes emits Windows-like paths with backslashes inside JSON.
+        If it writes something like "foo\bar", JSON decoding can turn "\b" into
+        a control character (e.g., tab for "\t"), causing Windows to reject the path.
+        """
+        if name is None:
+            return ""
+
+        s = str(name)
+        # Treat common escaped control characters as path separators when they
+        # likely came from a backslash in a JSON string (e.g., "folder\test" -> tab).
+        s = s.replace("\t", os.sep)
+        s = s.replace("\r", "")
+        s = s.replace("\n", "")
+
+        # Remove other ASCII control chars (0-31) to avoid invalid path errors.
+        s = "".join((ch if ord(ch) >= 32 else "_") for ch in s)
+        return s.strip()
+
     def _resolve_path(self, name: str) -> Path:
         # Allow relative subpaths but prevent escaping root
+        name = self._sanitize_user_path(name)
         p = Path(name)
         if p.is_absolute():
             # Drop directory components for absolute paths, keep basename only
@@ -40,6 +62,13 @@ class FileSystemExecutor:
             full = (root / p.name).resolve()
         full.parent.mkdir(parents=True, exist_ok=True)
         return full
+
+    def create_folder(self, path: str) -> Dict[str, str]:
+        folder_path = self._resolve_path(path)
+        # For folders, the resolved path is the folder itself
+        folder_path.mkdir(parents=True, exist_ok=True)
+        print(f"[FileSystem] Created folder: {folder_path}")
+        return {"action": "filesystem.create_folder", "path": str(folder_path), "success": True}
 
     def create_file(self, filename: str, content: str = "") -> Dict[str, str]:
         path = self._resolve_path(filename)
