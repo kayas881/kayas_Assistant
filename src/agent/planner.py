@@ -415,18 +415,46 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
                 return heuristic, raw, prompt
             
             # Search messages
-            if "search" in g:
-                query_match = re.search(r"(?:search|find)\s+(?:for\s+)?\"?([^\"]+)\"?", goal, re.IGNORECASE)
-                query = query_match.group(1).strip() if query_match else ""
-                contact_match = re.search(r"(?:in|from)\s+([A-Za-z][A-Za-z\s]+)", goal, re.IGNORECASE)
-                contact = contact_match.group(1).strip() if contact_match else None
+            if "search" in g or "find" in g:
+                # Support patterns like:
+                # - search for <query> in <contact> on whatsapp
+                # - find "<query>" in <contact>
+                # - search <query> in <contact>
+                # - search for <query> (global)
+
+                # First, try to extract contact if an "in <contact>" or "from <contact>" segment exists
+                contact = None
+                contact_match = re.search(
+                    r"(?:in|from)\s+([A-Za-z][A-Za-z0-9_\s]*?)(?:\s+on\s+whatsapp|\s+via\s+whatsapp|\s+using\s+whatsapp|$)",
+                    goal,
+                    re.IGNORECASE,
+                )
+                if contact_match:
+                    contact = contact_match.group(1).strip()
+
+                # Next, isolate the query between the verb and the "in/from <contact>" segment if present
+                query = ""
+                verb_match = re.search(r"(search|find)\s+(?:for\s+)?", goal, re.IGNORECASE)
+                if verb_match:
+                    start = verb_match.end()
+                    end = contact_match.start() if contact_match else len(goal)
+                    raw_query = goal[start:end].strip()
+                    # Trim surrounding quotes if any
+                    if len(raw_query) >= 2 and ((raw_query[0] == '"' and raw_query[-1] == '"') or (raw_query[0] == "'" and raw_query[-1] == "'")):
+                        raw_query = raw_query[1:-1]
+                    # Remove any trailing helper words like "in", just in case
+                    raw_query = re.sub(r"\s+(in|from)\s*$", "", raw_query, flags=re.IGNORECASE).strip()
+                    # Also strip any trailing "on whatsapp" accidentally captured
+                    raw_query = re.sub(r"\s+on\s+whatsapp\s*$", "", raw_query, flags=re.IGNORECASE).strip()
+                    query = raw_query
+
                 if query:
                     args = {"query": query}
                     if contact:
                         args["contact"] = contact
                     heuristic = [{"tool": "whatsapp.search_messages", "args": args}]
                     raw = json.dumps(heuristic)
-                    print(f"[Planner] Using WhatsApp search heuristic -> {query}")
+                    print(f"[Planner] Using WhatsApp search heuristic -> query='{query}' contact='{contact or ''}'")
                     return heuristic, raw, prompt
             
             # Mute chat

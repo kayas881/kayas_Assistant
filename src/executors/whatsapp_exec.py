@@ -2196,14 +2196,70 @@ class WhatsAppExecutor:
                     return {"success": False, "error": f"Contact '{contact}' not found"}
                 
                 time.sleep(0.5)
-                
-                # Use Ctrl+F for in-chat search
-                self._page.keyboard.press("Control+f")
-                time.sleep(0.3)
-                
-                search_input = self._page.wait_for_selector('div[data-testid="search-input"]', timeout=5000)
-                search_input.type(query, delay=50)
-                time.sleep(1)
+
+                # Ensure focus is in the chat pane (not the left sidebar)
+                try:
+                    self._page.click('#main')
+                except Exception:
+                    try:
+                        header = self._page.query_selector(Selectors.CHAT_HEADER)
+                        if header:
+                            header.click()
+                    except Exception:
+                        pass
+                time.sleep(0.2)
+
+                # Open the in-chat search UI and type directly (WhatsApp auto-focuses the search box)
+                self._page.keyboard.press("Control+Shift+f")
+                time.sleep(0.4)
+
+                # If focus still ends up in the sidebar, refocus the chat and try again
+                for _ in range(2):
+                    try:
+                        in_side = bool(self._page.evaluate('() => !!document.activeElement && !!document.activeElement.closest("#side")'))
+                    except Exception:
+                        in_side = False
+                    if not in_side:
+                        break
+                    try:
+                        self._page.click('#main')
+                    except Exception:
+                        pass
+                    time.sleep(0.1)
+                    self._page.keyboard.press("Control+Shift+f")
+                    time.sleep(0.3)
+
+                # Best-effort clear and type query into whichever element is focused
+                try:
+                    self._page.keyboard.press('Control+a')
+                    self._page.keyboard.press('Backspace')
+                except Exception:
+                    pass
+
+                self._page.keyboard.type(query, delay=50)
+                print(f"[WhatsApp] Typed query: {query}")
+                time.sleep(0.6)
+
+                # Select the first result and jump to it (keyboard-only, avoids fragile selectors)
+                # WhatsApp typically supports ArrowDown to focus a result, then Enter to open it.
+                try:
+                    self._page.keyboard.press("ArrowDown")
+                    time.sleep(0.15)
+                    self._page.keyboard.press("ArrowDown")
+                    time.sleep(0.15)
+                    self._page.keyboard.press("Enter")
+                    print("[WhatsApp] Attempted to jump to first search result")
+                except Exception:
+                    pass
+
+                # For in-chat searches, the primary goal is navigation to the match.
+                # Do not press Escape or collect sidebar results after this, as it can pull focus back to the chat list.
+                return {
+                    "success": True,
+                    "query": query,
+                    "contact": contact,
+                    "action": "whatsapp.search_messages"
+                }
                 
             else:
                 # Global search
