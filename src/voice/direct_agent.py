@@ -386,17 +386,20 @@ class DirectAgent:
                 heuristic_plan = [{"tool": "process.get_system_info", "args": {}}]
             
             # ========== FILE EXPLORER HEURISTICS (check before generic open) ==========
-            elif heuristic_plan is None and ("download" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower)):
+            # Check if there's a file extension mentioned (exclude file operations from folder navigation)
+            has_file_extension = bool(re.search(r"\.\w{2,4}\b", goal_lower))
+            
+            if heuristic_plan is None and not has_file_extension and ("download" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower)):
                 heuristic_plan = [{"tool": "explorer.downloads", "args": {}}]
-            elif heuristic_plan is None and ("document" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower) and "send" not in goal_lower):
+            elif heuristic_plan is None and not has_file_extension and ("document" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower) and "send" not in goal_lower):
                 heuristic_plan = [{"tool": "explorer.documents", "args": {}}]
-            elif heuristic_plan is None and ("desktop" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
+            elif heuristic_plan is None and not has_file_extension and ("desktop" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
                 heuristic_plan = [{"tool": "explorer.desktop", "args": {}}]
-            elif heuristic_plan is None and (("picture" in goal_lower or "photo" in goal_lower) and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower)):
+            elif heuristic_plan is None and not has_file_extension and (("picture" in goal_lower or "photo" in goal_lower) and ("open" in goal_lower or "go to" in goal_lower or "folder" in goal_lower)):
                 heuristic_plan = [{"tool": "explorer.pictures", "args": {}}]
-            elif heuristic_plan is None and ("music" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
+            elif heuristic_plan is None and not has_file_extension and ("music" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
                 heuristic_plan = [{"tool": "explorer.music", "args": {}}]
-            elif heuristic_plan is None and ("video" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
+            elif heuristic_plan is None and not has_file_extension and ("video" in goal_lower and ("open" in goal_lower or "go to" in goal_lower or "navigate" in goal_lower or "show" in goal_lower) and "create" not in goal_lower and "make" not in goal_lower):
                 heuristic_plan = [{"tool": "explorer.videos", "args": {}}]
             elif heuristic_plan is None and ("recycle" in goal_lower or "trash" in goal_lower or ("bin" in goal_lower and "recycle" in goal_lower)):
                 heuristic_plan = [{"tool": "explorer.recycle_bin", "args": {}}]
@@ -407,7 +410,9 @@ class DirectAgent:
             elif heuristic_plan is None and ("file explorer" in goal_lower or ("explorer" in goal_lower and "open" in goal_lower and "internet" not in goal_lower)):
                 heuristic_plan = [{"tool": "explorer.open", "args": {}}]
             
-            elif heuristic_plan is None and (goal_lower.startswith("open ") or (" open " in goal_lower)):
+            # Skip generic "open" heuristic if this is a file operation with location hint
+            # (e.g., "open tree.pdf in Documents" should go to planner, not try to start an app)
+            elif heuristic_plan is None and (goal_lower.startswith("open ") or (" open " in goal_lower)) and not (has_file_extension and " in " in goal_lower):
                 # Try to resolve app name to a program path
                 import os
                 import glob
@@ -1032,6 +1037,13 @@ Just ask me naturally, like you would a friend! For example:
                             response_parts.append(f"I created a folder at {path}")
                         elif "create_file" in action:
                             response_parts.append(f"I created a file at {path}")
+                        elif "rename" in action:
+                            new_path = result.get("new_path")
+                            old_path = result.get("old_path") or path
+                            if new_path:
+                                response_parts.append(f"I renamed {old_path} to {new_path}")
+                            else:
+                                response_parts.append("I completed the rename")
                         else:
                             response_parts.append(f"I completed the filesystem operation at {path}")
                     else:
@@ -1046,6 +1058,14 @@ Just ask me naturally, like you would a friend! For example:
                         response_parts.append("I created the folder")
                     if note:
                         response_parts.append(note)
+
+                elif action.startswith("explorer.rename"):
+                    old_path = result.get("old_name") or result.get("old_path") or "the item"
+                    new_path = result.get("new_name") or result.get("new_path")
+                    if new_path:
+                        response_parts.append(f"I renamed {old_path} to {new_path}")
+                    else:
+                        response_parts.append("I completed the rename")
                 
                 elif "browser" in action:
                     response_parts.append("I completed the browser automation")
@@ -1111,6 +1131,27 @@ Just ask me naturally, like you would a friend! For example:
                     elif "text" in result and "paste" in str(result.get("action", "")):
                         text = result.get("text", "")
                         response_parts.append(f"Here's what I pasted: {text}")
+                    elif "results" in result and "query" in result:
+                        # Handle local.search results
+                        query = result.get("query", "")
+                        results = result.get("results", [])
+                        if results:
+                            count = len(results)
+                            # Show first few results
+                            result_list = []
+                            for r in results[:5]:
+                                path = r.get("path", "")
+                                match_type = r.get("match", "")
+                                # Shorten path for readability
+                                short_path = path.split("\\")[-1] if "\\" in path else path
+                                result_list.append(f"{short_path} ({match_type})")
+                            
+                            if count <= 5:
+                                response_parts.append(f"Found {count} match(es) for '{query}': {', '.join(result_list)}")
+                            else:
+                                response_parts.append(f"Found {count} matches for '{query}'! Here are the first few: {', '.join(result_list)}")
+                        else:
+                            response_parts.append(f"Hmm, I couldn't find anything matching '{query}' in the search area")
                     elif "summary" in result:
                         summary = result.get("summary", "")
                         response_parts.append(f"Here's a quick summary for you: {summary}")

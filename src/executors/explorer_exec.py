@@ -60,6 +60,7 @@ class ExplorerExecutor:
                 return secondary
             return primary
 
+        # Exact location names
         if lower in {"desktop", "desktop folder"}:
             return str(pick_existing(Path(user_profile) / "Desktop", Path(onedrive) / "Desktop" if onedrive else None))
         if lower in {"downloads", "download", "downloads folder", "download folder"}:
@@ -72,6 +73,21 @@ class ExplorerExecutor:
             return str(Path(user_profile) / "Music")
         if lower in {"videos", "video", "videos folder", "video folder"}:
             return str(Path(user_profile) / "Videos")
+
+        # Prefixed paths like "desktop/abc" or "documents/foo/bar"
+        prefixes = {
+            "desktop": pick_existing(Path(user_profile) / "Desktop", Path(onedrive) / "Desktop" if onedrive else None),
+            "downloads": Path(user_profile) / "Downloads",
+            "documents": pick_existing(Path(user_profile) / "Documents", Path(onedrive) / "Documents" if onedrive else None),
+            "pictures": pick_existing(Path(user_profile) / "Pictures", Path(onedrive) / "Pictures" if onedrive else None),
+            "photos": pick_existing(Path(user_profile) / "Pictures", Path(onedrive) / "Pictures" if onedrive else None),
+            "music": Path(user_profile) / "Music",
+            "videos": Path(user_profile) / "Videos",
+        }
+        for key, base_path in prefixes.items():
+            if lower == key or lower.startswith(f"{key}\\") or lower.startswith(f"{key}/"):
+                suffix = p[len(key):].lstrip("/\\")
+                return str(Path(base_path) / suffix) if suffix else str(base_path)
 
         # Keep shell: monikers intact (critical for Downloads/Documents)
         if p.lower().startswith("shell:"):
@@ -87,6 +103,41 @@ class ExplorerExecutor:
     def _ui_not_available(self, feature: str) -> Dict[str, Any]:
         detail = "pywinauto not installed" if not PYWINAUTO_AVAILABLE else "UI automation not wired"
         return {"success": False, "error": f"{feature} requires UI automation ({detail})"}
+
+    def find_folder(self, name: str, search_root: str, max_depth: int = 3) -> List[Path]:
+        """Search for folders and files matching name within search_root.
+        
+        Args:
+            name: folder/file name to find (case-insensitive)
+            search_root: root directory to search from
+            max_depth: maximum depth to search (default 3 to avoid slow scans)
+            
+        Returns:
+            list of matching folder/file paths
+        """
+        matches = []
+        name_lower = name.lower()
+        root = Path(self._normalize_path(search_root))
+        
+        if not root.exists() or not root.is_dir():
+            return matches
+        
+        def search_recursive(current: Path, depth: int):
+            if depth > max_depth:
+                return
+            try:
+                for item in current.iterdir():
+                    # Check both files and folders - match by name or partial name
+                    if name_lower in item.name.lower():
+                        matches.append(item)
+                    # Recurse into directories
+                    if item.is_dir() and depth < max_depth:
+                        search_recursive(item, depth + 1)
+            except (PermissionError, OSError):
+                pass  # Skip inaccessible directories
+        
+        search_recursive(root, 0)
+        return matches
 
     # --------------------------
     # Core operations
@@ -173,22 +224,152 @@ class ExplorerExecutor:
     # --------------------------
     # File operations (direct)
     # --------------------------
-    def rename(self, old_name: str, new_name: str) -> Dict[str, Any]:
+    def rename(self, old_name: str, new_name: str, search_hint: str | None = None) -> Dict[str, Any]:
+        """Rename a file or folder.
+        
+        Args:
+            old_name: current name or path
+            new_name: new name (just the name, not full path)
+            search_hint: optional search scope like 'D:', 'Documents', 'D:\\Projects'
+        """
         try:
+            # If search_hint provided, search for the folder first
+            if search_hint:
+                search_root = self._normalize_path(search_hint)
+                # Extract just the folder name from old_name (in case it's a path)
+                folder_name = Path(old_name).name
+                matches = self.find_folder(folder_name, search_root)
+                
+                if not matches:
+                    return {
+                        "success": False,
+                        "error": f"folder '{folder_name}' not found in {search_root}",
+                        "action": "explorer.rename",
+                    }
+                if len(matches) > 1:
+                    # Use first match but inform user
+                    src = matches[0]
+                    dst = src.with_name(new_name)
+                    src.rename(dst)
+                    return {
+                        "success": True,
+                        "old_name": str(src),
+                        "new_name": str(dst),
+                        "action": "explorer.rename",
+                        "note": f"Found {len(matches)} matches, renamed the first one at {src.parent}",
+                    }
+                src = matches[0]
+                dst = src.with_name(new_name)
+                src.rename(dst)
+                return {"success": True, "old_name": str(src), "new_name": str(dst), "action": "explorer.rename"}
+            
+            # No search hint: use direct path resolution
             src = Path(self._normalize_path(old_name))
             dst = src.with_name(new_name)
-            src.rename(dst)
-            return {"success": True, "old_name": str(src), "new_name": str(dst), "action": "explorer.rename"}
+            try:
+                src.rename(dst)
+                return {"success": True, "old_name": str(src), "new_name": str(dst), "action": "explorer.rename"}
+            except FileNotFoundError:
+                # Fallback: if the item is actually in OneDrive's Desktop/Documents/Pictures, try there.
+                user_profile = os.environ.get("USERPROFILE") or str(Path.home())
+                onedrive = os.environ.get("OneDrive")
+                if onedrive:
+                    mappings = {
+                        Path(user_profile) / "Desktop": Path(onedrive) / "Desktop",
+                        Path(user_profile) / "Documents": Path(onedrive) / "Documents",
+                        Path(user_profile) / "Pictures": Path(onedrive) / "Pictures",
+                    }
+                    for primary, secondary in mappings.items():
+                        try:
+                            src_relative = src.relative_to(primary)
+                        except ValueError:
+                            continue
+                        alt_src = secondary / src_relative
+                        alt_dst = alt_src.with_name(new_name)
+                        if alt_src.exists():
+                            alt_src.rename(alt_dst)
+                            return {
+                                "success": True,
+                                "old_name": str(alt_src),
+                                "new_name": str(alt_dst),
+                                "action": "explorer.rename",
+                                "note": "Found item under OneDrive instead of local profile.",
+                            }
+                return {
+                    "success": False,
+                    "error": f"source not found: {src}",
+                    "action": "explorer.rename",
+                }
+            except Exception as e:
+                return {"success": False, "error": str(e), "action": "explorer.rename"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def delete(self, name: str | None = None, permanent: bool = False) -> Dict[str, Any]:
+    def delete(self, name: str | None = None, permanent: bool = False, search_hint: str | None = None) -> Dict[str, Any]:
         if not name:
             return {"success": False, "error": "delete requires 'name' path"}
+        # If search_hint provided, search for the item first
+        if search_hint:
+            search_root = self._normalize_path(search_hint)
+            item_name = Path(name).name
+            matches = self.find_folder(item_name, search_root)
+            if not matches:
+                return {"success": False, "error": f"item '{item_name}' not found in {search_root}", "action": "explorer.delete"}
+            # Use first match
+            path_to_delete = str(matches[0])
+            result = self.delete_file_direct(path=path_to_delete, permanent=permanent)
+            if len(matches) > 1:
+                result["note"] = f"Found {len(matches)} matches, deleted the first one."
+            return result
         return self.delete_file_direct(path=name, permanent=permanent)
 
-    def open_file(self, name: str) -> Dict[str, Any]:
+    def find_items(self, query: str, location: str | None = None) -> Dict[str, Any]:
+        """Search for files/folders matching query in the specified location.
+        
+        Args:
+            query: search term (file/folder name)
+            location: location hint (e.g., "D drive", "Desktop", "Documents", or absolute path)
+                     If None, searches workspace/current directory
+        
+        Returns:
+            dict with query, location, and results list
+        """
         try:
+            search_root = self._normalize_path(location) if location else str(Path.cwd())
+            matches = self.find_folder(query, search_root, max_depth=3)
+            
+            results = []
+            for match in matches:
+                results.append({
+                    "path": str(match),
+                    "name": match.name,
+                    "is_dir": match.is_dir(),
+                    "match": "filename"
+                })
+            
+            return {
+                "success": True,
+                "query": query,
+                "location": search_root,
+                "results": results,
+                "action": "explorer.find_items"
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e), "query": query}
+
+    def open_file(self, name: str, search_hint: str | None = None) -> Dict[str, Any]:
+        try:
+            # If search_hint provided, search for the file first
+            if search_hint:
+                search_root = self._normalize_path(search_hint)
+                file_name = Path(name).name
+                matches = self.find_folder(file_name, search_root)  # find_folder also finds files
+                if not matches:
+                    return {"success": False, "error": f"file '{file_name}' not found in {search_root}"}
+                # Use first match
+                file_path = str(matches[0])
+                os.startfile(file_path)  # type: ignore[attr-defined]
+                return {"success": True, "file": file_path, "action": "explorer.open_file"}
             os.startfile(self._normalize_path(name))  # type: ignore[attr-defined]
             return {"success": True, "file": name, "action": "explorer.open_file"}
         except Exception as e:
@@ -387,6 +568,50 @@ class ExplorerExecutor:
             else:
                 shutil.copy2(str(src), str(dst))
             return {"success": True, "source": str(src), "destination": str(dst), "action": "explorer.copy_file"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def copy_file_search(self, name: str, from_hint: str, to_hint: str) -> Dict[str, Any]:
+        """Copy a file or folder by searching for source under from_hint and placing under to_hint.
+
+        - name: item name to search (file or folder)
+        - from_hint: search root (e.g., "D drive", "D:\\", "Desktop", absolute path)
+        - to_hint: destination base (e.g., "Desktop", "Documents", absolute path)
+        """
+        try:
+            src_root = self._normalize_path(from_hint)
+            matches = self.find_folder(Path(name).name, src_root)
+            if not matches:
+                return {"success": False, "error": f"source '{name}' not found in {src_root}", "action": "explorer.copy_file_search"}
+            src_path = Path(matches[0])
+            dst_base = Path(self._normalize_path(to_hint))
+            dst_path = dst_base / src_path.name
+            result = self.copy_file(str(src_path), str(dst_path))
+            if len(matches) > 1:
+                result.setdefault("note", f"Found {len(matches)} matches, copied the first one.")
+            return result
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def move_file_search(self, name: str, from_hint: str, to_hint: str) -> Dict[str, Any]:
+        """Move a file or folder by searching for source under from_hint and placing under to_hint.
+
+        - name: item name to search (file or folder)
+        - from_hint: search root (e.g., "D drive", "D:\\", "Desktop", absolute path)
+        - to_hint: destination base (e.g., "Desktop", "Documents", absolute path)
+        """
+        try:
+            src_root = self._normalize_path(from_hint)
+            matches = self.find_folder(Path(name).name, src_root)
+            if not matches:
+                return {"success": False, "error": f"source '{name}' not found in {src_root}", "action": "explorer.move_file_search"}
+            src_path = Path(matches[0])
+            dst_base = Path(self._normalize_path(to_hint))
+            dst_path = dst_base / src_path.name
+            result = self.move_file(str(src_path), str(dst_path))
+            if len(matches) > 1:
+                result.setdefault("note", f"Found {len(matches)} matches, moved the first one.")
+            return result
         except Exception as e:
             return {"success": False, "error": str(e)}
 

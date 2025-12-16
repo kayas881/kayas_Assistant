@@ -4,6 +4,7 @@ from typing import List, Tuple
 import json
 from urllib.parse import quote_plus
 import re
+from pathlib import Path
 
 from .llm import LLM
 from .config import preferred_search_base, default_notes_filename
@@ -72,6 +73,7 @@ STRUCTURED_SYSTEM = (
     "Available tools:\n"
     "- filesystem.create_file {filename, content?}\n"
     "- filesystem.create_folder {path}\n"
+    "- filesystem.rename {path, new_name}\n"
     "- filesystem.append_file {filename, content}\n"
     "- web.fetch {url}\n"
     "- email.send {to, subject, body}\n"
@@ -270,13 +272,79 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             print("[Planner] Using Spotify heuristic")
             return heuristic, raw, prompt
 
+        # ========== SEARCH HEURISTICS (before explorer navigation to avoid conflicts) ==========
+        # Heuristic: search intent - distinguish between local file/folder search vs web search
+        search_match = re.search(r"(?:search for|search about|find|lookup)\s+(.+)", goal, re.IGNORECASE)
+        if search_match:
+            query_raw = search_match.group(1).strip()
+            
+            # Check if this is a local file/folder search (has location hints like "in D drive", "in Desktop", etc.)
+            local_search_indicators = [
+                r"\bin\s+([A-Za-z])\s+drive\b",  # "in D drive"
+                r"\bin\s+([A-Za-z]):\b",  # "in D:"
+                r"\bin\s+(desktop|downloads|documents|pictures|music|videos)\b",  # known folders
+                r"\bfolder\b",  # mentions folder
+                r"\bfile\b",  # mentions file
+            ]
+            
+            is_local_search = any(re.search(pattern, query_raw, re.IGNORECASE) for pattern in local_search_indicators)
+            
+            if is_local_search:
+                # Extract search query and location
+                query_clean = query_raw
+                location_hint = None
+                
+                # Extract location from patterns like "in D drive", "in Desktop", etc.
+                drive_match = re.search(r"\bin\s+([A-Za-z])\s+drive\b", query_clean, re.IGNORECASE)
+                if drive_match:
+                    location_hint = f"{drive_match.group(1).upper()}:\\"
+                    query_clean = re.sub(r"\bin\s+([A-Za-z])\s+drive\b", "", query_clean, flags=re.IGNORECASE).strip()
+                else:
+                    folder_match = re.search(r"\bin\s+(desktop|downloads|documents|pictures|music|videos)\b", query_clean, re.IGNORECASE)
+                    if folder_match:
+                        location_hint = folder_match.group(1)
+                        query_clean = re.sub(r"\bin\s+(desktop|downloads|documents|pictures|music|videos)\b", "", query_clean, flags=re.IGNORECASE).strip()
+                
+                # Clean up query
+                query_clean = query_clean.replace(" folder", "").replace(" file", "").strip()
+                
+                # Use explorer.find_items which supports location-based searching
+                heuristic = [{"tool": "explorer.find_items", "args": {"query": query_clean, "location": location_hint}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using explorer.find_items heuristic -> {query_clean} in {location_hint or 'current dir'}")
+                return heuristic, raw, prompt
+            
+            # Otherwise, it's a web search
+            should_save = "save" in goal.lower() or "notepad" in goal.lower() or "file" in goal.lower()
+            # Truncate at common follow-ups
+            query_raw = re.split(r"\s+and\s+save|\s+then\s+save|\s+and\s+summarize|\s+save\b", query_raw, maxsplit=1)[0].strip()
+            # Remove trailing punctuation/quotes
+            query_raw = query_raw.strip("\"' .,")
+            query_enc = quote_plus(query_raw) if query_raw else quote_plus(goal)
+            heuristic = [{"tool": "web.fetch", "args": {"url": f"https://www.google.com/search?q={query_enc}"}}]
+            # If user wants to save, append a file creation step with a descriptive filename
+            if should_save:
+                safe_query = re.sub(r"[^a-z0-9_\-]", "_", query_raw.lower())[:50]
+                heuristic.append({
+                    "tool": "filesystem.create_file",
+                    "args": {
+                        "filename": f"{safe_query}_results.txt",
+                        "content": f"Search results for '{query_raw}'\n\nTo view full results, visit:\nhttps://www.google.com/search?q={query_enc}"
+                    }
+                })
+            raw = json.dumps(heuristic)
+            print(f"[Planner] Using search heuristic -> {query_raw}" + (" (with save)" if should_save else ""))
+            return heuristic, raw, prompt
+
         # ========== FILE EXPLORER HEURISTICS (early match before LLM fallback) ==========
         explorer_keywords = ["explorer", "file explorer", "folder", "directory", "files", "this pc", "my computer"]
         is_explorer_intent = any(kw in g for kw in explorer_keywords)
         
         # Open specific folders (downloads, documents, desktop, etc.)
-        # Do NOT let navigation heuristics steal create-folder requests.
-        if (is_explorer_intent or any(word in g for word in ["open", "go to", "show", "navigate"])) and "create" not in g and "make" not in g:
+        # Do NOT let navigation heuristics steal create-folder, delete, open-file, copy, or move requests.
+        # Also exclude if there's a file extension mentioned (e.g., ".pdf", ".docx")
+        has_file_extension = bool(re.search(r"\.\w{2,4}\b", goal))  # matches .pdf, .docx, .txt, etc.
+        if (is_explorer_intent or any(word in g for word in ["open", "go to", "show", "navigate"])) and "create" not in g and "make" not in g and ("delete" not in g and "remove" not in g) and "copy" not in g and "move" not in g and not has_file_extension and not (("open" in g or "launch" in g) and (" in " in g)):
             # Quick access locations - check these FIRST
             if "download" in g:
                 heuristic = [{"tool": "explorer.downloads", "args": {}}]
@@ -408,6 +476,160 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             raw = json.dumps(heuristic)
             print(f"[Planner] Using filesystem.create_folder heuristic -> {rel_path}")
             return heuristic, raw, prompt
+
+        # Rename heuristic (files or folders). If an absolute or known location is provided, use explorer.rename; otherwise use filesystem.rename under artifacts.
+        if "rename" in g and " to " in g:
+            # Extract old/new names (prefer quoted).
+            rename_match = re.search(r"rename\s+[\"']([^\"']+)[\"']\s+to\s+[\"']([^\"']+)[\"']", goal, re.IGNORECASE)
+            if not rename_match:
+                rename_match = re.search(r"rename\s+([^\s]+)\s+to\s+([^\s]+)", goal, re.IGNORECASE)
+            if rename_match:
+                old_name = rename_match.group(1).strip().strip(" .\t\n\r")
+                new_name = rename_match.group(2).strip().strip(" .\t\n\r")
+            else:
+                old_name, new_name = "", ""
+
+            # Optional location or search hint
+            # Match more carefully to avoid capturing the old_name as part of the location
+            in_match = re.search(r"\b(?:in|inside|under)\s+([A-Za-z](?:\s+drive|:[\\/]?.*|[A-Za-z_.\- ]*))$", goal, re.IGNORECASE)
+            subpath = in_match.group(1).strip().strip("\"'") if in_match else ""
+
+            subpath_norm = subpath.strip()
+            # Check if it's a drive letter (search hint) like "D drive", "C drive", "D:"
+            drive_match = re.match(r"^([A-Za-z])(?:\s+drive|:?[\\/]?)$", subpath_norm, re.IGNORECASE)
+            if drive_match:
+                # Search hint: treat as drive root search
+                drive = drive_match.group(1).upper()
+                search_hint = f"{drive}:\\"
+                heuristic = [{"tool": "explorer.rename", "args": {"old_name": old_name, "new_name": new_name, "search_hint": search_hint}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using explorer.rename with search -> {old_name} in {search_hint}")
+                return heuristic, raw, prompt
+
+            is_absolute_dest = bool(re.match(r"^[A-Za-z]:[\\/]", subpath_norm)) or subpath_norm.startswith("\\\\")
+            known_locations = {"desktop", "downloads", "documents", "pictures", "music", "videos"}
+            is_known_location = subpath_norm.lower() in known_locations
+
+            if old_name and (is_absolute_dest or is_known_location):
+                # Could be a direct path or a search hint
+                # If it looks like a full path with subfolders, use it as-is
+                # Otherwise treat it as search hint
+                if "\\" in subpath_norm or "/" in subpath_norm:
+                    # Likely a specific path, try direct first, then search
+                    src_path = str(Path(subpath_norm) / old_name) if subpath_norm else old_name
+                    heuristic = [{"tool": "explorer.rename", "args": {"old_name": src_path, "new_name": new_name}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using explorer.rename heuristic -> {src_path} -> {new_name}")
+                    return heuristic, raw, prompt
+                else:
+                    # Single-word location like "Documents" - use as search hint
+                    heuristic = [{"tool": "explorer.rename", "args": {"old_name": old_name, "new_name": new_name, "search_hint": subpath_norm}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using explorer.rename with search -> {old_name} in {subpath_norm}")
+                    return heuristic, raw, prompt
+
+            if old_name:
+                # Relative/pathless: use filesystem under artifacts
+                rel_path = str(Path(subpath_norm) / old_name) if subpath_norm else old_name
+                heuristic = [{"tool": "filesystem.rename", "args": {"path": rel_path, "new_name": new_name}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using filesystem.rename heuristic -> {rel_path} -> {new_name}")
+                return heuristic, raw, prompt
+
+        # Delete/Open with search hints
+        if ("delete" in g or "remove" in g) and " in " in g:
+            # Check for "permanently" flag
+            permanent_flag = bool(re.search(r"\bpermanently?\b", goal, re.IGNORECASE))
+            # Remove the flag from the goal for parsing
+            goal_no_flag = re.sub(r"\s+permanently?\s*", " ", goal, flags=re.IGNORECASE).strip()
+            delete_match = re.search(r"(?:delete|remove)\s+[\"']?([^\"']+?)[\"']?\s+(?:in|inside|under|from)", goal_no_flag, re.IGNORECASE)
+            item = delete_match.group(1).strip() if delete_match else ""
+            in_match = re.search(r"\b(?:in|inside|under|from)\s+([A-Za-z](?:\s+drive|:[\\/ ]?.*|[A-Za-z_\.\- ]*))$", goal, re.IGNORECASE)
+            location = in_match.group(1).strip().strip("\"'") if in_match else ""
+            location_norm = location.strip()
+
+            if item:
+                drive_match = re.match(r"^([A-Za-z])(?:\s+drive|:?[\\/]?)$", location_norm, re.IGNORECASE)
+                if drive_match:
+                    drive = drive_match.group(1).upper()
+                    search_hint = f"{drive}:\\"
+                    heuristic = [{"tool": "explorer.delete", "args": {"name": item, "search_hint": search_hint, "permanent": permanent_flag}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using explorer.delete with search -> {item} in {search_hint}")
+                    return heuristic, raw, prompt
+                elif location_norm.lower() in {"desktop", "downloads", "documents", "pictures", "music", "videos"}:
+                    heuristic = [{"tool": "explorer.delete", "args": {"name": item, "search_hint": location_norm, "permanent": permanent_flag}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using explorer.delete with search -> {item} in {location_norm}")
+                    return heuristic, raw, prompt
+
+        if ("open" in g or "launch" in g) and " in " in g and "http" not in g:  # exclude web opens
+            open_match = re.search(r"(?:open|launch)\s+[\"']?([^\"']+?)[\"']?\s+(?:in|inside|under|from)", goal, re.IGNORECASE)
+            item = open_match.group(1).strip() if open_match else ""
+            in_match = re.search(r"\b(?:in|inside|under|from)\s+([A-Za-z](?:\s+drive|:[\\/ ]?.*|[A-Za-z_\.\- ]*))$", goal, re.IGNORECASE)
+            location = in_match.group(1).strip().strip("\"'") if in_match else ""
+            location_norm = location.strip()
+
+            if item:
+                drive_match = re.match(r"^([A-Za-z])(?:\s+drive|:?[\\/]?)$", location_norm, re.IGNORECASE)
+                if drive_match:
+                    drive = drive_match.group(1).upper()
+                    search_hint = f"{drive}:\\"
+                    heuristic = [{"tool": "explorer.open_file", "args": {"name": item, "search_hint": search_hint}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using explorer.open_file with search -> {item} in {search_hint}")
+                    return heuristic, raw, prompt
+                elif location_norm.lower() in {"desktop", "downloads", "documents", "pictures", "music", "videos"}:
+                    heuristic = [{"tool": "explorer.open_file", "args": {"name": item, "search_hint": location_norm}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using explorer.open_file with search -> {item} in {location_norm}")
+                    return heuristic, raw, prompt
+
+        # Copy with search hints: "copy X from Y to Z"
+        if "copy" in g and " from " in g and " to " in g:
+            copy_match = re.search(r"copy\s+[\"']?([^\"']+?)[\"']?\s+from\s+([^\s].*?)\s+to\s+([^\s].*)$", goal, re.IGNORECASE)
+            if copy_match:
+                item = copy_match.group(1).strip().strip("\"'")
+                from_loc = copy_match.group(2).strip().strip("\"'")
+                to_loc = copy_match.group(3).strip().strip("\"'")
+
+                # Normalize hints like "D drive" or known folders
+                def norm_hint(h: str) -> str:
+                    h2 = h.strip()
+                    m = re.match(r"^([A-Za-z])(?:\s+drive|:)$", h2, re.IGNORECASE)
+                    if m:
+                        return f"{m.group(1).upper()}:\\"
+                    return h2
+
+                from_hint = norm_hint(from_loc)
+                to_hint = norm_hint(to_loc)
+                heuristic = [{"tool": "explorer.copy_file_search", "args": {"name": item, "from": from_hint, "to": to_hint}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using explorer.copy_file_search -> {item} from {from_hint} to {to_hint}")
+                return heuristic, raw, prompt
+
+        # Move with search hints: "move X from Y to Z"
+        if "move" in g and " from " in g and " to " in g:
+            move_match = re.search(r"move\s+[\"']?([^\"']+?)[\"']?\s+from\s+([^\s].*?)\s+to\s+([^\s].*)$", goal, re.IGNORECASE)
+            if move_match:
+                item = move_match.group(1).strip().strip("\"'")
+                from_loc = move_match.group(2).strip().strip("\"'")
+                to_loc = move_match.group(3).strip().strip("\"'")
+
+                # Normalize hints like "D drive" or known folders
+                def norm_hint(h: str) -> str:
+                    h2 = h.strip()
+                    m = re.match(r"^([A-Za-z])(?:\s+drive|:)$", h2, re.IGNORECASE)
+                    if m:
+                        return f"{m.group(1).upper()}:\\"
+                    return h2
+
+                from_hint = norm_hint(from_loc)
+                to_hint = norm_hint(to_loc)
+                heuristic = [{"tool": "explorer.move_file_search", "args": {"name": item, "from": from_hint, "to": to_hint}}]
+                raw = json.dumps(heuristic)
+                print(f"[Planner] Using explorer.move_file_search -> {item} from {from_hint} to {to_hint}")
+                return heuristic, raw, prompt
 
         # Image/video/file sending heuristics (even without "whatsapp" keyword)
         # Pattern: "send image <path> to <contact>" or "send <path> to <contact>"
@@ -821,17 +1043,8 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             print("[Planner] Using messaging heuristic")
             return heuristic, raw, prompt
 
-        # Heuristic: web search intent -> clean query; optionally save to file
-        search_match = re.search(r"(?:search for|search about|google|lookup|find)\s+(.+)", goal, re.IGNORECASE)
-        if search_match:
-            query_raw = search_match.group(1).strip()
-            should_save = "save" in goal.lower() or "notepad" in goal.lower() or "file" in goal.lower()
-            # Truncate at common follow-ups
-            query_raw = re.split(r"\s+and\s+save|\s+then\s+save|\s+and\s+summarize|\s+save\b", query_raw, maxsplit=1)[0].strip()
-            # Remove trailing punctuation/quotes
-            query_raw = query_raw.strip("\"' .,")
-            query_enc = quote_plus(query_raw) if query_raw else quote_plus(goal)
-            heuristic = [{"tool": "web.fetch", "args": {"url": f"https://www.google.com/search?q={query_enc}"}}]
+        # (Search heuristic moved earlier in the flow)
+        # Heuristic: web search fallback (non-local searches)
             # If user wants to save, append a file creation step with a descriptive filename
             if should_save:
                 safe_query = re.sub(r"[^a-z0-9_\-]", "_", query_raw.lower())[:50]

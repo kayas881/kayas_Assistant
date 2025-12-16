@@ -63,6 +63,24 @@ class FileSystemExecutor:
         full.parent.mkdir(parents=True, exist_ok=True)
         return full
 
+    def rename(self, path: str, new_name: str) -> Dict[str, str]:
+        src = self._resolve_path(path)
+        if not src.exists():
+            return {"action": "filesystem.rename", "path": str(src), "error": "source not found"}
+
+        clean_new = self._sanitize_user_path(new_name)
+        dst = src.with_name(clean_new)
+        try:
+            src.rename(dst)
+            return {
+                "action": "filesystem.rename",
+                "old_path": str(src),
+                "new_path": str(dst),
+                "success": True,
+            }
+        except Exception as e:
+            return {"action": "filesystem.rename", "path": str(src), "error": str(e)}
+
     def create_folder(self, path: str) -> Dict[str, str]:
         folder_path = self._resolve_path(path)
         # For folders, the resolved path is the folder itself

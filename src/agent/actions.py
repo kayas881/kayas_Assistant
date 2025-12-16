@@ -171,6 +171,8 @@ class Router:
                 # Prefer 'path'; accept 'folder'/'name' for convenience
                 folder = a.get("path") or a.get("folder") or a.get("name")
                 return self.executors["fs"].create_folder(folder or "new_folder")
+            if t == "filesystem.rename":
+                return self.executors["fs"].rename(path=a["path"], new_name=a["new_name"])
             if t == "filesystem.append_file":
                 return self.executors["fs"].append_file(a.get("filename", "notes.txt"), a.get("content", ""))
             if t == "filesystem.delete_file":
@@ -793,11 +795,11 @@ class Router:
                 if t == "explorer.paste":
                     return exp.paste()
                 if t == "explorer.rename":
-                    return exp.rename(old_name=a["old_name"], new_name=a["new_name"])
+                    return exp.rename(old_name=a["old_name"], new_name=a["new_name"], search_hint=a.get("search_hint"))
                 if t == "explorer.delete":
-                    return exp.delete(name=a.get("name"), permanent=a.get("permanent", False))
+                    return exp.delete(name=a.get("name"), permanent=a.get("permanent", False), search_hint=a.get("search_hint"))
                 if t == "explorer.open_file":
-                    return exp.open_file(name=a["name"])
+                    return exp.open_file(name=a["name"], search_hint=a.get("search_hint"))
                 if t == "explorer.properties":
                     return exp.show_properties(name=a.get("name"))
                 if t == "explorer.back":
@@ -814,8 +816,8 @@ class Router:
                     return exp.toggle_preview_pane()
                 if t == "explorer.toggle_details":
                     return exp.toggle_details_pane()
-                if t == "explorer.search":
-                    return exp.search(query=a["query"], path=a.get("path"))
+                if t == "explorer.find_items":
+                    return exp.find_items(query=a["query"], location=a.get("location"))
                 if t == "explorer.quick_access":
                     return exp.go_to_quick_access()
                 if t == "explorer.this_pc":
@@ -852,6 +854,10 @@ class Router:
                     return exp.move_file(source=a["source"], destination=a["destination"])
                 if t == "explorer.copy_file":
                     return exp.copy_file(source=a["source"], destination=a["destination"])
+                if t == "explorer.copy_file_search":
+                    return exp.copy_file_search(name=a["name"], from_hint=a["from"], to_hint=a["to"])
+                if t == "explorer.move_file_search":
+                    return exp.move_file_search(name=a["name"], from_hint=a["from"], to_hint=a["to"]) 
                 if t == "explorer.delete_direct":
                     return exp.delete_file_direct(path=a["path"], permanent=a.get("permanent", False))
         except Exception as e:

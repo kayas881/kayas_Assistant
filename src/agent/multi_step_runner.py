@@ -409,7 +409,25 @@ IMPORTANT:
             )
         
 
-    def _shorten_output(self, output: Any, max_len: int = 200) -> str:
+    def _shorten_output(self, output: Any, max_len: int = 500) -> str:
+        """Shorten output for display in prompts. Special handling for search results."""
+        # Special handling for search/find results
+        if isinstance(output, dict) and "results" in output and "query" in output:
+            query = output.get("query", "")
+            results = output.get("results", [])
+            location = output.get("location", "")
+            if results:
+                # Show count and first few file names
+                count = len(results)
+                names = [r.get("name", r.get("path", "").split("\\")[-1]) for r in results[:3]]
+                summary = f"Found {count} match(es) for '{query}' in {location}: {', '.join(names)}"
+                if count > 3:
+                    summary += f" and {count - 3} more"
+                return summary
+            else:
+                return f"No results found for '{query}' in {location}"
+        
+        # Default shortening
         text = json.dumps(output, default=str) if isinstance(output, (dict, list)) else str(output)
         text = text.replace("\n", " ")
         return text[:max_len] + ("..." if len(text) > max_len else "")
