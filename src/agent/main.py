@@ -7,10 +7,8 @@ from typing import Dict, List
 
 from rich import print
 
-from .config import artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, search_root, smtp_config, strong_model, planning_mode, react_max_steps, react_beam_width, google_calendar_config, slack_config, spotify_config, desktop_enabled, llm_backend, hf_base_model, hf_adapter_dir, hf_merged_model_dir, hf_use_4bit, remote_base_url, remote_api_key, use_multi_candidate_planning, num_plan_candidates, max_action_retries
+from .config import artifacts_dir, db_path, ollama_model, planner_model, chroma_dir, embed_model, search_root, smtp_config, strong_model, planning_mode, react_max_steps, react_beam_width, google_calendar_config, slack_config, spotify_config, desktop_enabled, llm_backend, hf_base_model, hf_adapter_dir, hf_merged_model_dir, hf_use_4bit, remote_base_url, remote_api_key, use_multi_candidate_planning, num_plan_candidates, max_action_retries
 from .llm import LLM
-from .hf_llm import HFLLM
-from .http_llm import HTTPLLM
 from .planner import Planner, plan_structured, plan_candidates, estimate_confidence
 from .actions import Router, Action, parse_actions
 from .safety import SafetyPolicy
@@ -42,25 +40,34 @@ def run_agent(goal: str) -> Dict[str, str]:
 
     # Select backend
     backend = llm_backend()
+    planner_llm = None
     if backend == "hf":
+        # Lazy import HFLLM to avoid torch dependency unless requested
+        from .hf_llm import HFLLM
         merged = hf_merged_model_dir()
         base_or_merged = merged if merged else hf_base_model()
         adapter = "" if merged else hf_adapter_dir()
         llm = HFLLM(base_or_merged, adapter_dir=adapter or None, use_4bit=hf_use_4bit())
+        planner_llm = llm
     elif backend == "http":
+        # Lazy import HTTPLLM to avoid extra deps unless requested
+        from .http_llm import HTTPLLM
         base_url = remote_base_url()
         if not base_url:
             raise RuntimeError("models.backend is 'http' but no models.remote.base_url configured in profile or REMOTE_LLM_BASE_URL env")
         llm = HTTPLLM(base_url=base_url, api_key=remote_api_key())
+        planner_llm = llm
     else:
         llm = LLM(model=ollama_model())
+        planner_llm = LLM(model=planner_model())
     planner = Planner(llm)
     steps: List[str] = []
 
     fs = FileSystemExecutor(FSConfig(root=artifacts_dir()))
     local_search = LocalSearchExecutor(LocalSearchConfig(root=search_root()))
     email_exec = EmailExecutor(EmailConfig(**smtp_config()))
-    web_exec = WebExecutor(WebConfig())
+    # Pass LLM into WebExecutor so web.answer can synthesize
+    web_exec = WebExecutor(WebConfig(), llm=llm, planner_llm=planner_llm)
     browser_exec = BrowserExecutor(BrowserConfig())
     process_exec = ProcessExecutor(ProcessConfig())
     desktop_exec = DesktopExecutor(DesktopConfig()) if desktop_enabled() else None

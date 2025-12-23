@@ -65,8 +65,7 @@ STRUCTURED_SYSTEM = (
     "You are a JSON-only planner. Respond with VALID JSON ONLY. No explanations, no markdown, no extra text.\n\n"
     "Output format: either a single object {\"tool\": \"name\", \"args\": {...}} or an array of such objects.\n\n"
     "Example valid response:\n"
-    "[{\"tool\": \"web.fetch\", \"args\": {\"url\": \"https://google.com/search?q=freelancing+trends\"}}, "
-    "{\"tool\": \"filesystem.create_file\", \"args\": {\"filename\": \"notes.txt\", \"content\": \"Summary here\"}}]\n\n"
+    "[{\"tool\": \"web.answer\", \"args\": {\"question\": \"best Python web frameworks\", \"search_queries\": [\"best Python web frameworks 2025\", \"Django vs FastAPI comparison\"], \"max_sources\": 8}}]\n\n"
     "Example for opening program and typing:\n"
     "[{\"tool\": \"process.start_program\", \"args\": {\"program\": \"notepad.exe\", \"background\": true}}, "
     "{\"tool\": \"uia.type_text\", \"args\": {\"window_title\": \"Notepad\", \"text\": \"hello world\"}}]\n\n"
@@ -75,7 +74,16 @@ STRUCTURED_SYSTEM = (
     "- filesystem.create_folder {path}\n"
     "- filesystem.rename {path, new_name}\n"
     "- filesystem.append_file {filename, content}\n"
-    "- web.fetch {url}\n"
+    "WEB RESEARCH (Comet-style - use for ANY question requiring web information):\n"
+    "- web.deep_research {question, max_iterations?, sources_per_query?} (BEST: iterative evidence-based research with claim verification and confidence scoring)\n"
+    "- web.answer {question, search_queries?, max_sources?, temperature?, max_tokens?} (ONE-STEP: runs research + synthesizes a final answer with inline citations)\n"
+    "- web.research {question, search_queries?, max_sources?} (returns extracted sources and content for manual synthesis)\n"
+    "  - Provide search_queries array with 2-3 different search angles for comprehensive research\n"
+    "  - Returns sources with title, url, domain, content ready for citation\n"
+    "- web.search {query, max_results?} (simple search, returns [{title, url, snippet}, ...])\n"
+    "- web.fetch {url} (fetch single page)\n"
+    "- web.extract_main_text {url, max_chars?} (extract article text from single URL)\n"
+    "For question-shaped requests (what/why/how/best/compare): Prefer web.deep_research for comprehensive answers with confidence scoring, or web.answer for faster results.\n"
     "- email.send {to, subject, body}\n"
     "- local.search {query}\n"
     "- calendar.list_events {calendar_id?, max_results?, days_ahead?}\n"
@@ -272,6 +280,21 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             print("[Planner] Using Spotify heuristic")
             return heuristic, raw, prompt
 
+        # ========== QUESTION-SHAPED QUERIES → WEB.DEEP_RESEARCH ==========
+        # If the goal is likely a question, route to deep_research for iterative evidence-based research
+        q_like = (
+            g.strip().endswith("?") or
+            bool(re.match(r"^(what|why|how|which|who|when|where|best|top|compare|alternatives|pros and cons)\b", g)) or
+            ("compare" in g or " vs " in g)
+        )
+        if q_like:
+            # Use deep_research for comprehensive, confidence-scored answers
+            base = goal.strip().rstrip("?.! ")
+            heuristic = [{"tool": "web.deep_research", "args": {"question": base, "max_iterations": 3, "sources_per_query": 4}}]
+            raw = json.dumps(heuristic)
+            print(f"[Planner] Using web.deep_research heuristic -> {base}")
+            return heuristic, raw, prompt
+
         # ========== SEARCH HEURISTICS (before explorer navigation to avoid conflicts) ==========
         # Heuristic: search intent - distinguish between local file/folder search vs web search
         search_match = re.search(r"(?:search for|search about|find|lookup)\s+(.+)", goal, re.IGNORECASE)
@@ -314,14 +337,22 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
                 print(f"[Planner] Using explorer.find_items heuristic -> {query_clean} in {location_hint or 'current dir'}")
                 return heuristic, raw, prompt
             
-            # Otherwise, it's a web search
+            # Otherwise, it's a web research - use Comet-style pipeline
             should_save = "save" in goal.lower() or "notepad" in goal.lower() or "file" in goal.lower()
             # Truncate at common follow-ups
             query_raw = re.split(r"\s+and\s+save|\s+then\s+save|\s+and\s+summarize|\s+save\b", query_raw, maxsplit=1)[0].strip()
             # Remove trailing punctuation/quotes
             query_raw = query_raw.strip("\"' .,")
-            query_enc = quote_plus(query_raw) if query_raw else quote_plus(goal)
-            heuristic = [{"tool": "web.fetch", "args": {"url": f"https://www.google.com/search?q={query_enc}"}}]
+            
+            # Use web.research for comprehensive search with multiple queries
+            # Generate a couple of search query variants for better coverage
+            search_queries = [query_raw]
+            # Add a variant if the query is complex enough
+            if len(query_raw.split()) >= 3:
+                search_queries.append(f"{query_raw} explained")
+            
+            heuristic = [{"tool": "web.research", "args": {"question": query_raw, "search_queries": search_queries, "max_sources": 8}}]
+            
             # If user wants to save, append a file creation step with a descriptive filename
             if should_save:
                 safe_query = re.sub(r"[^a-z0-9_\-]", "_", query_raw.lower())[:50]
@@ -329,11 +360,11 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
                     "tool": "filesystem.create_file",
                     "args": {
                         "filename": f"{safe_query}_results.txt",
-                        "content": f"Search results for '{query_raw}'\n\nTo view full results, visit:\nhttps://www.google.com/search?q={query_enc}"
+                        "content": f"Research results for '{query_raw}' - content will be filled after extraction"
                     }
                 })
             raw = json.dumps(heuristic)
-            print(f"[Planner] Using search heuristic -> {query_raw}" + (" (with save)" if should_save else ""))
+            print(f"[Planner] Using web.research heuristic -> {query_raw}" + (" (with save)" if should_save else ""))
             return heuristic, raw, prompt
 
         # ========== FILE EXPLORER HEURISTICS (early match before LLM fallback) ==========
@@ -1041,22 +1072,6 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             heuristic = [{"tool": "messaging.send_to_contact", "args": {"name": contact, "message": body}}]
             raw = json.dumps(heuristic)
             print("[Planner] Using messaging heuristic")
-            return heuristic, raw, prompt
-
-        # (Search heuristic moved earlier in the flow)
-        # Heuristic: web search fallback (non-local searches)
-            # If user wants to save, append a file creation step with a descriptive filename
-            if should_save:
-                safe_query = re.sub(r"[^a-z0-9_\-]", "_", query_raw.lower())[:50]
-                heuristic.append({
-                    "tool": "filesystem.create_file",
-                    "args": {
-                        "filename": f"{safe_query}_results.txt",
-                        "content": f"Search results for '{query_raw}'\n\nTo view full results, visit:\nhttps://www.google.com/search?q={query_enc}"
-                    }
-                })
-            raw = json.dumps(heuristic)
-            print(f"[Planner] Using search heuristic -> {query_raw}" + (" (with save)" if should_save else ""))
             return heuristic, raw, prompt
 
         # Heuristic: read Notepad content for "what's on my screen"/define/read/summarize intents

@@ -411,7 +411,7 @@ IMPORTANT:
 
     def _shorten_output(self, output: Any, max_len: int = 500) -> str:
         """Shorten output for display in prompts. Special handling for search results."""
-        # Special handling for search/find results
+        # Special handling for local file/folder search results (explorer.find_items)
         if isinstance(output, dict) and "results" in output and "query" in output:
             query = output.get("query", "")
             results = output.get("results", [])
@@ -426,6 +426,139 @@ IMPORTANT:
                 return summary
             else:
                 return f"No results found for '{query}' in {location}"
+        
+        # Special handling for web.research results (Comet-style)
+        if isinstance(output, dict) and output.get("action") == "web.research":
+            question = output.get("question", "")
+            sources = output.get("sources", [])
+            sources_reviewed = output.get("sources_reviewed", 0)
+            queries_used = output.get("queries_used", [])
+            
+            # Special handling for web.deep_research results (iterative evidence-based research)
+            if isinstance(output, dict) and output.get("action") == "web.deep_research":
+                success = output.get("success", False)
+                if success:
+                    answer = (output.get("answer") or "").strip()
+                    sources = output.get("sources", [])
+                    conf_breakdown = output.get("confidence_breakdown", [])
+                    overall_conf = output.get("overall_confidence", 0.0)
+                    iterations = output.get("iterations", 0)
+                    total_sources = output.get("total_sources", 0)
+                    
+                    lines = []
+                    # Show research metadata
+                    lines.append(f"Deep Research Results ({iterations} iterations, {total_sources} sources):")
+                    lines.append(f"Overall Confidence: {overall_conf:.0%}\n")
+                    
+                    # Show answer
+                    if answer:
+                        lines.append("Answer:")
+                        lines.append(answer)
+                    
+                    # Show sources
+                    if sources:
+                        lines.append(f"\n{len(sources)} Sources:")
+                        for s in sources[:10]:
+                            sid = s.get("id", "?")
+                            title = s.get("title", "")[:60]
+                            domain = s.get("domain", "")
+                            quality = s.get("quality", 0.0)
+                            lines.append(f"[{sid}] {title} ({domain}) - quality: {quality:.1f}")
+                    
+                    # Show high-confidence claims
+                    if conf_breakdown:
+                        high_conf_claims = [c for c in conf_breakdown if c.get("confidence", 0) >= 0.6]
+                        if high_conf_claims:
+                            lines.append(f"\nHigh-Confidence Claims ({len(high_conf_claims)}):")
+                            for c in high_conf_claims[:5]:
+                                claim_text = c.get("claim", "")[:80]
+                                conf = c.get("confidence", 0)
+                                support = c.get("support_count", 0)
+                                lines.append(f"- {claim_text} (conf: {conf:.0%}, {support} sources)")
+                    
+                    return "\n".join(lines)
+                else:
+                    return f"Deep research failed: {output.get('error', 'unknown error')}"
+            
+            # Special handling for web.answer results (one-shot synthesis with citations)
+            if isinstance(output, dict) and output.get("action") == "web.answer":
+                success = output.get("success", False)
+                if success:
+                    answer = (output.get("answer") or "").strip()
+                    sources = output.get("sources", [])
+                    lines = []
+                    if answer:
+                        lines.append("Final Answer:\n" + answer)
+                    if sources:
+                        lines.append("\nSources:")
+                        for s in sources[:8]:
+                            title = s.get("title", "")[:60]
+                            domain = s.get("domain", "")
+                            lines.append(f"- {title} ({domain})")
+                    return "\n".join(lines) if lines else "Answer generated."
+                else:
+                    return f"Answer failed: {output.get('error', 'unknown error')}"
+
+            if output.get("success") and sources:
+                lines = [f"Research for '{question}'"]
+                lines.append(f"Queries: {', '.join(queries_used)}")
+                lines.append(f"Reviewing sources · {sources_reviewed}")
+                lines.append("Sources:")
+                for s in sources[:10]:
+                    title = s.get("title", "")[:50]
+                    domain = s.get("domain", "")
+                    word_count = s.get("word_count", 0)
+                    lines.append(f"  [{title}]({domain}) - {word_count} words")
+                lines.append(f"\n--- Content from sources (for citation) ---")
+                for i, s in enumerate(sources[:5], 1):
+                    content = s.get("content", "")[:1500]
+                    lines.append(f"\n[{i}] {s.get('title', '')} ({s.get('url', '')})")
+                    lines.append(content)
+                return "\n".join(lines)
+            else:
+                # Show detailed error when no sources were found
+                err = output.get('error') or "no sources found"
+                return f"Research failed: {err}"
+        
+        # Special handling for web.search results
+        if isinstance(output, dict) and output.get("action") == "web.search":
+            query = output.get("query", "")
+            results = output.get("results", [])
+            success = output.get("success", False)
+            if success and results:
+                count = len(results)
+                # Format search results for LLM to see
+                summary_lines = [f"Web search for '{query}' returned {count} results:"]
+                for i, r in enumerate(results[:5], 1):
+                    title = r.get("title", "")[:60]
+                    url = r.get("url", "")
+                    snippet = r.get("snippet", "")[:100]
+                    summary_lines.append(f"{i}. {title}\n   URL: {url}\n   {snippet}")
+                return "\n".join(summary_lines)
+            elif not success:
+                return f"Web search failed: {output.get('error', 'unknown error')}"
+            else:
+                return f"No web results found for '{query}'"
+        
+        # Special handling for web.extract_main_text results
+        if isinstance(output, dict) and output.get("action") == "web.extract_main_text":
+            url = output.get("url", "")
+            title = output.get("title", "")
+            word_count = output.get("word_count", 0)
+            main_text = output.get("main_text", "")[:1000]  # Show first 1000 chars
+            if output.get("success"):
+                return f"Extracted from '{title}' ({word_count} words):\n{main_text}..."
+            else:
+                return f"Failed to extract content from {url}: {output.get('error', 'unknown')}"
+        
+        # Special handling for web.fetch results
+        if isinstance(output, dict) and output.get("action") == "web.fetch":
+            title = output.get("title", "")
+            excerpt = output.get("excerpt", "")[:500]
+            if output.get("success"):
+                return f"Fetched '{title}':\n{excerpt}..."
+            else:
+                return f"Failed to fetch: {output.get('error', 'unknown')}"
         
         # Default shortening
         text = json.dumps(output, default=str) if isinstance(output, (dict, list)) else str(output)

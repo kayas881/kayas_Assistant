@@ -179,8 +179,43 @@ class Router:
                 return self.executors["fs"].delete_file(a.get("filename", "notes.txt"))
             if t == "filesystem.archive_file":
                 return self.executors["fs"].archive_file(a.get("filename", "notes.txt"))
+            
+            # --- Web tools (3-stage search pipeline) ---
+            if t == "web.search":
+                return self.executors["web"].search(
+                    query=a["query"],
+                    max_results=a.get("max_results")
+                )
             if t == "web.fetch":
-                return self.executors["web"].fetch(a["url"])  # raises KeyError if missing
+                return self.executors["web"].fetch(a["url"])
+            if t == "web.extract_main_text":
+                return self.executors["web"].extract_main_text(
+                    url=a["url"],
+                    max_chars=a.get("max_chars", 15000)
+                )
+            if t == "web.answer":
+                return self.executors["web"].answer(
+                    question=a["question"],
+                    search_queries=a.get("search_queries"),
+                    max_sources=a.get("max_sources", 8),
+                    max_chars_per_source=a.get("max_chars_per_source", 6000),
+                    temperature=a.get("temperature", 0.2),
+                    max_tokens=a.get("max_tokens", 700)
+                )
+            if t == "web.deep_research":
+                return self.executors["web"].deep_research(
+                    question=a["question"],
+                    max_iterations=a.get("max_iterations", 3),
+                    sources_per_query=a.get("sources_per_query", 4)
+                )
+            if t == "web.research":
+                return self.executors["web"].research(
+                    question=a["question"],
+                    search_queries=a.get("search_queries"),
+                    max_sources=a.get("max_sources", 10),
+                    max_chars_per_source=a.get("max_chars_per_source", 8000)
+                )
+            
             if t == "email.send":
                 return self.executors["email"].send(a["to"], a.get("subject", ""), a.get("body", ""))
             if t == "local.search":

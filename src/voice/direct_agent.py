@@ -8,14 +8,14 @@ import uuid
 import re
 
 from ..agent.config import (
-    artifacts_dir, db_path, ollama_model, chroma_dir, embed_model, 
+    artifacts_dir, db_path, ollama_model, planner_model, chroma_dir, embed_model, 
     search_root, smtp_config, google_calendar_config, slack_config, 
     spotify_config, desktop_enabled, github_config, notion_config,
     trello_config, jira_config, whatsapp_config, planning_mode, llm_backend,
     hf_base_model, hf_merged_model_dir, hf_adapter_dir, hf_use_4bit
 )
 from ..agent.llm import LLM
-from ..agent.hf_llm import HFLLM
+# HFLLM is imported lazily in __init__ when backend == 'hf' to avoid torch dependency otherwise
 from ..agent.planner import Planner
 from ..agent.actions import Router
 from ..executors.filesystem import FSConfig, FileSystemExecutor
@@ -57,6 +57,7 @@ class DirectAgent:
     def __init__(self):
         # Initialize LLM based on configured backend
         backend = llm_backend()
+        self.planner_llm = None
         if backend == "hf":
             print("[DirectAgent] Using HuggingFace backend")
             # Get HF config values
@@ -69,14 +70,17 @@ class DirectAgent:
             base_or_merged = merged if merged else base
             adapter_to_load = None if merged else adapter
             
+            from ..agent.hf_llm import HFLLM
             self.llm = HFLLM(
                 base_or_merged=base_or_merged,
                 adapter_dir=adapter_to_load,
                 use_4bit=use_4bit
             )
+            self.planner_llm = self.llm
         else:
-            print(f"[DirectAgent] Using Ollama backend with model: {ollama_model()}")
+            print(f"[DirectAgent] Using Ollama backend with model: {ollama_model()} (planner: {planner_model()})")
             self.llm = LLM(model=ollama_model())
+            self.planner_llm = LLM(model=planner_model())
         
         self.planner = Planner(self.llm)
         
@@ -88,7 +92,8 @@ class DirectAgent:
         self.fs = FileSystemExecutor(FSConfig(root=artifacts_dir()))
         self.local_search = LocalSearchExecutor(LocalSearchConfig(root=search_root()))
         self.email_exec = EmailExecutor(EmailConfig(**smtp_config()))
-        self.web_exec = WebExecutor(WebConfig())
+        # Provide LLM to WebExecutor so web.answer can generate citations-based answers
+        self.web_exec = WebExecutor(WebConfig(), llm=self.llm, planner_llm=self.planner_llm)
         self.browser_exec = BrowserExecutor(BrowserConfig())
         
         # IMPORTANT: Run UI Automation in a separate process to avoid COM conflicts.
@@ -1023,6 +1028,77 @@ Just ask me naturally, like you would a friend! For example:
                 elif "click" in action:
                     response_parts.append("I clicked as requested")
                 
+                elif "web.research" in action:
+                    if result.get("success") is False and result.get("error"):
+                        response_parts.append(f"Research failed: {result.get('error')}")
+                    else:
+                        sources = result.get("sources", [])
+                        if sources:
+                            lines = ["Here are the sources I pulled (with extracted text):"]
+                            for s in sources[:5]:
+                                title = (s.get("title", "") or "Untitled")[:80]
+                                domain = s.get("domain", "")
+                                wc = s.get("word_count", 0)
+                                lines.append(f"- {title} ({domain}, {wc} words)")
+                            response_parts.append("\n".join(lines))
+                        else:
+                            response_parts.append("I ran the research but no content was extracted from the sources.")
+
+                elif "web.deep_research" in action:
+                    if result.get("success") is False and result.get("error"):
+                        response_parts.append(f"Deep research failed: {result.get('error')}")
+                    else:
+                        answer = (result.get("answer") or "").strip()
+                        sources = result.get("sources", [])
+                        overall_conf = result.get("overall_confidence", 0.0)
+                        iterations = result.get("iterations", 0)
+                        total_sources = result.get("total_sources", 0)
+                        
+                        if answer:
+                            response_parts.append(f"Research Results ({iterations} iterations, {total_sources} sources, {overall_conf:.0%} confidence):\n{answer}")
+                        
+                        if sources:
+                            lines = ["Sources:"]
+                            for s in sources[:6]:
+                                title = (s.get("title", "") or "Untitled")[:80]
+                                domain = s.get("domain", "")
+                                quality = s.get("quality", 0.0)
+                                lines.append(f"- {title} ({domain}) [quality: {quality:.1f}]")
+                            response_parts.append("\n".join(lines))
+
+                elif "web.answer" in action:
+                    if result.get("success") is False and result.get("error"):
+                        response_parts.append(f"Answer failed: {result.get('error')}")
+                    else:
+                        answer = (result.get("answer") or "").strip()
+                        sources = result.get("sources", [])
+                        if answer:
+                            response_parts.append(f"Here's my answer with citations:\n{answer}")
+                        if sources:
+                            lines = ["Sources:"]
+                            for s in sources[:6]:
+                                title = (s.get("title", "") or "Untitled")[:80]
+                                domain = s.get("domain", "")
+                                lines.append(f"- {title} ({domain})")
+                            response_parts.append("\n".join(lines))
+
+                elif "web.answer" in action:
+                    if result.get("success") is False and result.get("error"):
+                        response_parts.append(f"Answer generation failed: {result.get('error')}")
+                    else:
+                        answer = (result.get("answer") or "").strip()
+                        if answer:
+                            response_parts.append(answer)
+                        # Always list sources succinctly
+                        sources = result.get("sources", [])
+                        if sources:
+                            src_lines = ["Sources:"]
+                            for s in sources[:5]:
+                                title = (s.get("title", "") or "Untitled")[:80]
+                                domain = s.get("domain", "")
+                                src_lines.append(f"- {title} ({domain})")
+                            response_parts.append("\n".join(src_lines))
+
                 elif "web.fetch" in action:
                     title = result.get("title", "")
                     if title:

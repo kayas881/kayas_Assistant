@@ -19,8 +19,21 @@ def db_path() -> Path:
 
 def ollama_model() -> str:
     # Try to read from profile first, then env, then default
-    default = str(profile_get("models.main_model", "llama3"))
+    default = str(profile_get("models.main_model", "llama3.1"))
     return env_str("OLLAMA_MODEL", default)
+
+
+def planner_model() -> str:
+    """Model used for fast planning steps (e.g., query planning / gap spotting).
+
+    Order of precedence:
+    1) Profile: models.planner_model
+    2) Env: OLLAMA_PLANNER_MODEL
+    3) Fallback: ollama_model()
+    """
+    prof = profile_get("models.planner_model", None)
+    default = str(prof) if prof else ollama_model()
+    return env_str("OLLAMA_PLANNER_MODEL", default)
 
 
 def embed_model() -> str:
@@ -43,8 +56,8 @@ def llm_backend() -> str:
     val = profile_get("models.backend", None)
     if val:
         return str(val).lower()
-    # CHANGE: Set default to 'hf'
-    return env_str("AGENT_LLM_BACKEND", "hf").lower()
+    # Default to 'ollama' unless overridden by env/profile
+    return env_str("AGENT_LLM_BACKEND", "ollama").lower()
 
 
 # Remote HTTP LLM backend config
