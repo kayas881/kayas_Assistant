@@ -27,12 +27,6 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 
 **No cloud APIs required** — your data stays on your machine.
 
-### 🎥 Demo Video
-
-<div align="center">
-  <iframe width="560" height="315" src="https://www.youtube.com/embed/nnDcUl4WiPE" title="Kayas AI Assistant Demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
-</div>
-
 ---
 
 ## ✨ Features
@@ -203,6 +197,21 @@ python kayas.py --no-voice
 "Send a WhatsApp message to John saying I'll be late"
 "Read my unread WhatsApp messages"
 "Send image C:\Photos\vacation.jpg to Family Group"
+# Demo video
+
+---
+
+## 🎬 Demo Video
+
+Watch a short demo of Kayas performing WhatsApp and File Explorer tasks (voice-over included):
+
+<video controls width="720" style="max-width:100%;">
+  <source src="https://github.com/user-attachments/assets/3f61d752-f6a7-41cc-a885-085282a6123f" type="video/mp4">
+  Your browser does not support the video tag. You can watch the demo here: 
+  <a href="https://github.com/user-attachments/assets/3f61d752-f6a7-41cc-a885-085282a6123f">Demo video</a>
+</video>
+
+If the player does not load on GitHub, click the link above to open the video in your browser or download it for local playback.
 
 # Productivity
 "Add a meeting to my calendar for tomorrow at 3pm"
