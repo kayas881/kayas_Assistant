@@ -320,7 +320,7 @@ IMPORTANT:
         
         try:
             # Get model's continuation decision
-            response = self.llm.generate(prompt, max_tokens=1000)
+            response = self.llm.generate(prompt)
             self._log_continuation_output(response)
             
             print(f"[MultiStepRunner] Model response: {response[:200]}...")

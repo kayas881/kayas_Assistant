@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 import time
 import re
+import os
 
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
@@ -32,8 +33,8 @@ class WhatsAppConfig:
     """Configuration for WhatsApp Web automation"""
     session_dir: str = ".agent/whatsapp_session"
     headless: bool = False  # WhatsApp Web works better with visible browser
-    timeout_ms: int = 30000
-    message_delay_ms: int = 100  # Delay between keystrokes for natural typing
+    timeout_ms: int = 15000  # Reduced from 30000
+    message_delay_ms: int = 30  # Reduced from 100 for faster typing
     viewport_width: int = 1280
     viewport_height: int = 800
 
@@ -258,16 +259,29 @@ class WhatsAppExecutor:
         """Navigate to WhatsApp Web and wait for login."""
         try:
             current_url = self._page.url
+            
+            # Fast path: already on WhatsApp and logged in
+            if "web.whatsapp.com" in current_url:
+                # Quick check if already logged in (very short timeout)
+                logged_in_selectors = f"{Selectors.LOGGED_IN}, {Selectors.SIDE_PANEL}, {Selectors.CHAT_LIST_HEADER}"
+                try:
+                    self._page.wait_for_selector(logged_in_selectors, timeout=2000)
+                    print("[WhatsApp] Already logged in - skipping navigation")
+                    return {"success": True, "logged_in": True, "fast_path": True}
+                except PWTimeoutError:
+                    pass  # Not logged in yet, continue below
+            
+            # Navigate if not on WhatsApp
             if "web.whatsapp.com" not in current_url:
                 self._page.goto("https://web.whatsapp.com")
-                time.sleep(2)  # Give page time to start loading
+                time.sleep(1)  # Reduced from 2s
             
             # First, check if already logged in by looking for chat list or side panel
             logged_in_selectors = f"{Selectors.LOGGED_IN}, {Selectors.SIDE_PANEL}, {Selectors.CHAT_LIST_HEADER}"
             
-            # Try to find logged-in indicator first (with longer timeout)
+            # Try to find logged-in indicator first (reduced timeout)
             try:
-                self._page.wait_for_selector(logged_in_selectors, timeout=15000)
+                self._page.wait_for_selector(logged_in_selectors, timeout=8000)
                 print("[WhatsApp] Detected logged-in state")
                 return {"success": True, "logged_in": True}
             except PWTimeoutError:
@@ -289,7 +303,7 @@ class WhatsAppExecutor:
             # Neither logged in nor QR code found - page might still be loading
             # Try waiting a bit more for logged-in state
             try:
-                self._page.wait_for_selector(logged_in_selectors, timeout=10000)
+                self._page.wait_for_selector(logged_in_selectors, timeout=5000)
                 print("[WhatsApp] Detected logged-in state after wait")
                 return {"success": True, "logged_in": True}
             except PWTimeoutError:
@@ -312,40 +326,44 @@ class WhatsAppExecutor:
     def _search_contact(self, name: str) -> bool:
         """Search for a contact by name."""
         try:
+            # First, press Escape to close any open panels/dialogs and clear previous search
+            self._page.keyboard.press("Escape")
+            time.sleep(0.15)
+            
             # Try primary search box selector, fall back to alternative
             search_box = None
             try:
-                search_box = self._page.wait_for_selector(Selectors.SEARCH_BOX, timeout=3000)
+                search_box = self._page.wait_for_selector(Selectors.SEARCH_BOX, timeout=2000)
             except PWTimeoutError:
                 try:
-                    search_box = self._page.wait_for_selector(Selectors.SEARCH_BOX_ALT, timeout=3000)
+                    search_box = self._page.wait_for_selector(Selectors.SEARCH_BOX_ALT, timeout=2000)
                 except PWTimeoutError:
                     # Try clicking the search icon/area first
                     search_area = self._page.query_selector('div[data-testid="chat-list-search"]')
                     if search_area:
                         search_area.click()
-                        time.sleep(0.3)
-                        search_box = self._page.wait_for_selector(Selectors.SEARCH_BOX, timeout=3000)
+                        time.sleep(0.15)
+                        search_box = self._page.wait_for_selector(Selectors.SEARCH_BOX, timeout=2000)
             
             if not search_box:
                 print("[WhatsApp] Could not find search box")
                 return False
                 
             search_box.click()
-            time.sleep(0.3)
+            time.sleep(0.1)
             
-            # Clear and type contact name
+            # Clear and type contact name (faster)
             search_box.fill("")
-            search_box.type(name, delay=50)
-            time.sleep(1.5)  # Wait for search results
+            search_box.type(name, delay=20)  # Reduced delay
+            time.sleep(0.8)  # Reduced from 1.5s
             
             # Try to find and click the contact
             # Use flexible matching - look for the name in chat titles (case insensitive)
             contact_selector = f'span[title*="{name}" i]'
             try:
-                contact = self._page.wait_for_selector(contact_selector, timeout=5000)
+                contact = self._page.wait_for_selector(contact_selector, timeout=3000)
                 contact.click()
-                time.sleep(0.5)
+                time.sleep(0.2)
                 print(f"[WhatsApp] Found and clicked contact: {name}")
                 return True
             except PWTimeoutError:
@@ -353,10 +371,10 @@ class WhatsAppExecutor:
                 try:
                     first_result = self._page.wait_for_selector(
                         Selectors.CONTACT_LIST,
-                        timeout=3000
+                        timeout=2000
                     )
                     first_result.click()
-                    time.sleep(0.5)
+                    time.sleep(0.2)
                     print(f"[WhatsApp] Clicked first search result for: {name}")
                     return True
                 except PWTimeoutError:
@@ -373,10 +391,10 @@ class WhatsAppExecutor:
             # Try primary message input selector, fall back to alternative
             msg_input = None
             try:
-                msg_input = self._page.wait_for_selector(Selectors.MESSAGE_INPUT, timeout=5000)
+                msg_input = self._page.wait_for_selector(Selectors.MESSAGE_INPUT, timeout=3000)
             except PWTimeoutError:
                 try:
-                    msg_input = self._page.wait_for_selector(Selectors.MESSAGE_INPUT_ALT, timeout=3000)
+                    msg_input = self._page.wait_for_selector(Selectors.MESSAGE_INPUT_ALT, timeout=2000)
                 except PWTimeoutError:
                     pass
             
@@ -385,9 +403,9 @@ class WhatsAppExecutor:
                 return False
             
             msg_input.click()
-            time.sleep(0.2)
+            time.sleep(0.1)
             
-            # Type message with natural delay
+            # Type message with fast delay
             msg_input.type(message, delay=self.cfg.message_delay_ms)
             print(f"[WhatsApp] Typed message: {message[:50]}...")
             return True
@@ -401,10 +419,10 @@ class WhatsAppExecutor:
             # Try clicking send button with fallback
             send_btn = None
             try:
-                send_btn = self._page.wait_for_selector(Selectors.SEND_BUTTON, timeout=2000)
+                send_btn = self._page.wait_for_selector(Selectors.SEND_BUTTON, timeout=1500)
             except PWTimeoutError:
                 try:
-                    send_btn = self._page.wait_for_selector(Selectors.SEND_BUTTON_ALT, timeout=2000)
+                    send_btn = self._page.wait_for_selector(Selectors.SEND_BUTTON_ALT, timeout=1000)
                 except PWTimeoutError:
                     pass
             
@@ -487,12 +505,12 @@ class WhatsAppExecutor:
             if not self._type_message(message):
                 return {"success": False, "error": "Failed to type message in the chat input box"}
             
-            time.sleep(0.3)
+            time.sleep(0.1)  # Reduced from 0.3s
             
             if not self._send_message():
                 return {"success": False, "error": "Failed to send message - could not find or click send button"}
             
-            time.sleep(0.5)  # Wait for message to be sent
+            time.sleep(0.2)  # Reduced from 0.5s
             
             return {
                 "success": True,
@@ -663,11 +681,6 @@ class WhatsAppExecutor:
         if not self._ensure_browser():
             return {"success": False, "error": "Failed to start browser"}
         
-        # Validate image path
-        img_path = Path(image_path)
-        if not img_path.exists():
-            return {"success": False, "error": f"Image not found: {image_path}"}
-        
         nav_result = self._navigate_to_whatsapp()
         if not nav_result.get("success"):
             return nav_result
@@ -676,6 +689,43 @@ class WhatsAppExecutor:
             return {"success": False, "error": f"Contact '{contact}' not found"}
         
         try:
+            # Validate image path with fallback search in common folders
+            img_path = Path(image_path)
+            if not img_path.exists():
+                name = img_path.name
+                user_profile = os.environ.get("USERPROFILE", "")
+                candidates = [
+                    Path(user_profile) / "Documents" / name,
+                    Path(user_profile) / "Downloads" / name,
+                    Path(user_profile) / "Pictures" / name,
+                    Path(user_profile) / "Desktop" / name,
+                    Path.cwd() / name,
+                ]
+                found = None
+                for c in candidates:
+                    if c.exists():
+                        found = c
+                        break
+                if not found:
+                    search_dirs = [
+                        Path(user_profile) / "Documents",
+                        Path(user_profile) / "Downloads",
+                        Path(user_profile) / "Pictures",
+                        Path(user_profile) / "Desktop",
+                    ]
+                    for sd in search_dirs:
+                        try:
+                            matches = list(sd.rglob(name))
+                            if matches:
+                                found = matches[0]
+                                break
+                        except Exception:
+                            continue
+                if found:
+                    img_path = found
+                else:
+                    return {"success": False, "error": f"Image not found: {image_path}"}
+
             # Click attach button - try multiple selectors
             attach_btn = None
             for selector in [Selectors.ATTACH_BUTTON, Selectors.ATTACH_BUTTON_ALT]:
@@ -1751,7 +1801,7 @@ class WhatsAppExecutor:
             return {"success": False, "error": f"Contact '{contact}' not found"}
         
         try:
-            time.sleep(1.5)
+            time.sleep(0.5)  # Reduced from 1.5s
             
             # Get the message list container first
             # WhatsApp has message bubbles inside divs with class message-in or message-out
@@ -1783,7 +1833,7 @@ class WhatsAppExecutor:
             
             # Scroll the message into view and hover to reveal dropdown
             target_msg.scroll_into_view_if_needed()
-            time.sleep(0.5)
+            time.sleep(0.2)  # Reduced from 0.5s
             
             # Get the bounding box of the message for precise hovering
             box = target_msg.bounding_box()
@@ -1796,7 +1846,7 @@ class WhatsAppExecutor:
             else:
                 target_msg.hover()
             
-            time.sleep(0.8)  # Wait for dropdown to appear
+            time.sleep(0.4)  # Reduced from 0.8s - Wait for dropdown to appear
             
             # Take screenshot to see what appeared
             self._page.screenshot(path="debug_screens/after_hover.png")
@@ -2195,7 +2245,7 @@ class WhatsAppExecutor:
                 if not self._search_contact(contact):
                     return {"success": False, "error": f"Contact '{contact}' not found"}
                 
-                time.sleep(0.5)
+                time.sleep(0.2)  # Reduced from 0.5s
 
                 # Ensure focus is in the chat pane (not the left sidebar)
                 try:
@@ -2211,7 +2261,7 @@ class WhatsAppExecutor:
 
                 # Open the in-chat search UI and type directly (WhatsApp auto-focuses the search box)
                 self._page.keyboard.press("Control+Shift+f")
-                time.sleep(0.4)
+                time.sleep(0.2)  # Reduced from 0.4s
 
                 # If focus still ends up in the sidebar, refocus the chat and try again
                 for _ in range(2):
@@ -2236,17 +2286,17 @@ class WhatsAppExecutor:
                 except Exception:
                     pass
 
-                self._page.keyboard.type(query, delay=50)
+                self._page.keyboard.type(query, delay=25)  # Reduced from delay=50
                 print(f"[WhatsApp] Typed query: {query}")
-                time.sleep(0.6)
+                time.sleep(0.4)  # Reduced from 0.6s
 
                 # Select the first result and jump to it (keyboard-only, avoids fragile selectors)
                 # WhatsApp typically supports ArrowDown to focus a result, then Enter to open it.
                 try:
                     self._page.keyboard.press("ArrowDown")
-                    time.sleep(0.15)
+                    time.sleep(0.1)  # Reduced from 0.15s
                     self._page.keyboard.press("ArrowDown")
-                    time.sleep(0.15)
+                    time.sleep(0.1)  # Reduced from 0.15s
                     self._page.keyboard.press("Enter")
                     print("[WhatsApp] Attempted to jump to first search result")
                 except Exception:
@@ -2270,8 +2320,8 @@ class WhatsAppExecutor:
                     search_box = self._page.wait_for_selector(Selectors.SEARCH_BOX_ALT, timeout=3000)
                 
                 search_box.click()
-                search_box.type(query, delay=50)
-                time.sleep(1.5)
+                search_box.type(query, delay=25)  # Reduced from 50
+                time.sleep(0.8)  # Reduced from 1.5s
             
             # Collect results
             results = []

@@ -252,6 +252,48 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
     try:
         g = goal.lower()
         # Smart defaults heuristics -------------------------------------------------
+        
+        # ========== WHATSAPP SEND MESSAGE (early check - works without 'whatsapp' keyword) ==========
+        # Pattern: "send message to X saying Y" or "message X saying Y"
+        if ("send" in g or "message" in g) and ("saying" in g or "that" in g or "with" in g):
+            # Parse: "send message to Contact saying message" or "message Contact saying text"
+            send_match = re.search(r"(?:send\s+)?(?:message|msg|text)\s+(?:to\s+)?([A-Za-z][A-Za-z0-9_\s]*?)\s+(?:saying|that|with)\s+(.+)$", goal, re.IGNORECASE)
+            if send_match:
+                contact = send_match.group(1).strip()
+                message = send_match.group(2).strip().strip('"').strip("'")
+                if contact and message:
+                    heuristic = [{"tool": "whatsapp.send_message", "args": {"contact": contact, "message": message}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp send message heuristic -> {contact}: {message}")
+                    return heuristic, raw, prompt
+        
+        # ========== WHATSAPP REPLY (early check - works without 'whatsapp' keyword) ==========
+        # Pattern: "reply to X saying Y" or "tell X Y"
+        if "reply" in g or "tell" in g:
+            # Try: "reply to Contact saying message" or "tell Contact message"
+            reply_match = re.search(r"(?:reply|tell)\s+(?:to\s+)?([A-Za-z][A-Za-z0-9_\s]*?)(?:\s+(?:saying|that|with|:)\s+|\s+)(.+)$", goal, re.IGNORECASE)
+            if reply_match:
+                contact = reply_match.group(1).strip()
+                reply_text = reply_match.group(2).strip().strip('"').strip("'")
+                if contact and reply_text:
+                    heuristic = [{"tool": "whatsapp.reply_to_message", "args": {"contact": contact, "reply_text": reply_text}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp reply heuristic -> {contact}: {reply_text}")
+                    return heuristic, raw, prompt
+        
+        # ========== WHATSAPP SEARCH (early check - 'search for X in Contact on whatsapp') ==========
+        # Pattern: "search for query in contact on whatsapp"
+        if ("search" in g or "find" in g) and "whatsapp" in g and " in " in g:
+            search_match = re.search(r"(?:search\s+(?:for\s+)?|find\s+)(.+?)\s+(?:in|from)\s+([A-Za-z][A-Za-z0-9_\s]*?)(?:\s+on\s+whatsapp)?$", goal, re.IGNORECASE)
+            if search_match:
+                query = search_match.group(1).strip().strip('"').strip("'")
+                contact = search_match.group(2).strip()
+                if query and contact:
+                    heuristic = [{"tool": "whatsapp.search_messages", "args": {"query": query, "contact": contact}}]
+                    raw = json.dumps(heuristic)
+                    print(f"[Planner] Using WhatsApp search heuristic -> '{query}' in {contact}")
+                    return heuristic, raw, prompt
+        
         if ("chrome" in g) and ("profile" in g):
             mprof = re.search(r"profile\s+(?:named|called)?\s*([\w\- ]+)", goal, re.IGNORECASE)
             profile_name = mprof.group(1).strip() if mprof else "Default"
@@ -282,10 +324,14 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
 
         # ========== QUESTION-SHAPED QUERIES → WEB.DEEP_RESEARCH ==========
         # If the goal is likely a question, route to deep_research for iterative evidence-based research
+        # BUT skip if it looks like a WhatsApp reply (already handled above)
+        is_whatsapp_reply = ("reply" in g or "tell" in g) and ("saying" in g or "that" in g or "with" in g)
         q_like = (
-            g.strip().endswith("?") or
-            bool(re.match(r"^(what|why|how|which|who|when|where|best|top|compare|alternatives|pros and cons)\b", g)) or
-            ("compare" in g or " vs " in g)
+            not is_whatsapp_reply and (
+                g.strip().endswith("?") or
+                bool(re.match(r"^(what|why|how|which|who|when|where|best|top|compare|alternatives|pros and cons)\b", g)) or
+                ("compare" in g or " vs " in g)
+            )
         )
         if q_like:
             # Use deep_research for comprehensive, confidence-scored answers
@@ -670,6 +716,25 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             if not path_match:
                 path_match = re.search(r'([/\\]?[\w/\\]+\.[a-zA-Z0-9]+)', goal)
             image_path = path_match.group(1) if path_match else ""
+            
+            # Check for folder context like "in documents", "in downloads", etc.
+            import os
+            folder_match = re.search(r'\bin\s+(documents?|downloads?|pictures?|desktop|music|videos?)', goal, re.IGNORECASE)
+            if folder_match and image_path and not os.path.isabs(image_path):
+                folder = folder_match.group(1).lower()
+                user_profile = os.environ.get("USERPROFILE", "")
+                if "document" in folder:
+                    image_path = os.path.join(user_profile, "Documents", image_path)
+                elif "download" in folder:
+                    image_path = os.path.join(user_profile, "Downloads", image_path)
+                elif "picture" in folder:
+                    image_path = os.path.join(user_profile, "Pictures", image_path)
+                elif "desktop" in folder:
+                    image_path = os.path.join(user_profile, "Desktop", image_path)
+                elif "music" in folder:
+                    image_path = os.path.join(user_profile, "Music", image_path)
+                elif "video" in folder:
+                    image_path = os.path.join(user_profile, "Videos", image_path)
             
             # Extract contact - look for "to <name>" at end
             contact_match = re.search(r'\bto\s+([A-Za-z][A-Za-z0-9_\s]*?)(?:\s+on|\s+via|\s+using|$)', goal, re.IGNORECASE)

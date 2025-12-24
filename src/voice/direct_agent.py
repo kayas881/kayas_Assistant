@@ -634,7 +634,16 @@ class DirectAgent:
             # If the plan is a single deterministic launcher, avoid multi-step continuation
             if plan.get("actions") and len(plan["actions"]) == 1:
                 lone_tool = plan["actions"][0].get("tool")
-                if lone_tool == "browser.open_chrome_profile":
+                # Treat certain tools as single-step even if the goal text suggests multi-step
+                single_step_tools = {
+                    "browser.open_chrome_profile",
+                    # WhatsApp direct send operations should not trigger continuation checks
+                    "whatsapp.send_message",
+                    "whatsapp.send_image",
+                    "whatsapp.send_video",
+                    "whatsapp.send_document",
+                }
+                if lone_tool in single_step_tools:
                     is_multistep = False
             
             if is_multistep:
