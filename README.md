@@ -20,7 +20,12 @@
 Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 
 ### 🎥 Demo
-- Watch a quick walkthrough of WhatsApp and file explorer automation: [demo/kayas_assistant - Made with Clipchamp.mp4](demo/kayas_assistant%20-%20Made%20with%20Clipchamp.mp4)
+<p align="center">
+  <video src="demo/kayas_assistant%20-%20Made%20with%20Clipchamp.mp4" width="720" controls>
+    Your browser doesn't support embedded video. Watch the mp4 directly
+    <a href="demo/kayas_assistant%20-%20Made%20with%20Clipchamp.mp4">here</a>.
+  </video>
+</p>
 
 - 🎤 **Voice Control** — Natural speech input via Whisper ASR + Text-to-Speech responses
 - 🖥️ **Desktop Automation** — Control any Windows application via UI Automation & PyAutoGUI
