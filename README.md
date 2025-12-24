@@ -30,7 +30,10 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 ### 🎥 Demo Video
 
 <div align="center">
-  <iframe width="560" height="315" src="https://www.youtube.com/embed/nnDcUl4WiPE" title="Kayas AI Assistant Demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+  <video width="560" height="315" controls>
+    <source src="https://github.com/kayas881/kayas_Assistant/raw/main/demo/kayas_assistant%20-%20Made%20with%20Clipchamp.mp4" type="video/mp4">
+    Your browser does not support the video tag.
+  </video>
 </div>
 
 ---
@@ -94,7 +97,7 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │  │  ┌──────────┐  ┌───────────────┐  ┌─────────────────┐   │    │
 │  │  │  Ollama  │  │  HuggingFace  │  │   HTTP Remote   │   │    │
 │  │  │  (API)   │  │  (4-bit+LoRA) │  │   (Any API)     │   │    │
-│  │  └──────────┘  └───────────────┘  └─────────────────┘   │    │
+│  └──────────┘  └───────────────┘  └─────────────────┘   │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
@@ -108,7 +111,7 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │  │  ├─────────┤  ├─────────┤  ├─────────┤  ├──────────┤    │    │
 │  │  │Calendar │  │  Email  │  │Filesys  │  │  Audio   │    │    │
 │  │  │(Google) │  │ (SMTP)  │  │ (Local) │  │(Record)  │    │    │
-│  │  └─────────┘  └─────────┘  └─────────┘  └──────────┘    │    │
+│  └─────────┘  └─────────┘  └─────────┘  └──────────┘    │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
@@ -116,7 +119,7 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │  │  ┌────────────────┐        ┌─────────────────────────┐  │    │
 │  │  │ SQLite Memory  │        │  ChromaDB Vector Store  │  │    │
 │  │  │ (Conversations)│        │  (Semantic Search)      │  │    │
-│  │  └────────────────┘        └─────────────────────────┘  │    │
+│  └────────────────┘        └─────────────────────────┘  │    │
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
