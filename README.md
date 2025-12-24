@@ -31,8 +31,9 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 
 ## 🎥 Demo
 
-[![Watch Demo](https://img.youtube.com/vi/nnDcUl4WiPE/maxresdefault.jpg)]
-(https://kayas881.github.io/kayas_Assistant/)
+## 🎥 Demo
+
+[![Watch Demo](https://img.youtube.com/vi/nnDcUl4WiPE/maxresdefault.jpg)](https://kayas881.github.io/kayas_Assistant/)
 
 
 ## ✨ Features
