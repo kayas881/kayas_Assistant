@@ -27,18 +27,6 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 
 **No cloud APIs required** — your data stays on your machine.
 
-<<<<<<< HEAD
-=======
-### 🎥 Demo Video
-
-<div align="center">
-  <video width="560" height="315" controls>
-    <source src="https://github.com/kayas881/kayas_Assistant/raw/main/demo/kayas_assistant%20-%20Made%20with%20Clipchamp.mp4" type="video/mp4">
-    Your browser does not support the video tag.
-  </video>
-</div>
-
->>>>>>> e4637b9995a42406084076b97dec923b583822cb
 ---
 
 ## ✨ Features
@@ -100,7 +88,7 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │  │  ┌──────────┐  ┌───────────────┐  ┌─────────────────┐   │    │
 │  │  │  Ollama  │  │  HuggingFace  │  │   HTTP Remote   │   │    │
 │  │  │  (API)   │  │  (4-bit+LoRA) │  │   (Any API)     │   │    │
-│  └──────────┘  └───────────────┘  └─────────────────┘   │    │
+│  │  └──────────┘  └───────────────┘  └─────────────────┘   │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
@@ -114,7 +102,7 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │  │  ├─────────┤  ├─────────┤  ├─────────┤  ├──────────┤    │    │
 │  │  │Calendar │  │  Email  │  │Filesys  │  │  Audio   │    │    │
 │  │  │(Google) │  │ (SMTP)  │  │ (Local) │  │(Record)  │    │    │
-│  └─────────┘  └─────────┘  └─────────┘  └──────────┘    │    │
+│  │  └─────────┘  └─────────┘  └─────────┘  └──────────┘    │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
@@ -122,7 +110,7 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │  │  ┌────────────────┐        ┌─────────────────────────┐  │    │
 │  │  │ SQLite Memory  │        │  ChromaDB Vector Store  │  │    │
 │  │  │ (Conversations)│        │  (Semantic Search)      │  │    │
-│  └────────────────┘        └─────────────────────────┘  │    │
+│  │  └────────────────┘        └─────────────────────────┘  │    │
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -209,21 +197,6 @@ python kayas.py --no-voice
 "Send a WhatsApp message to John saying I'll be late"
 "Read my unread WhatsApp messages"
 "Send image C:\Photos\vacation.jpg to Family Group"
-# Demo video
-
----
-
-## 🎬 Demo Video
-
-Watch a short demo of Kayas performing WhatsApp and File Explorer tasks (voice-over included):
-
-<video controls width="720" style="max-width:100%;">
-  <source src="https://github.com/user-attachments/assets/3f61d752-f6a7-41cc-a885-085282a6123f" type="video/mp4">
-  Your browser does not support the video tag. You can watch the demo here: 
-  <a href="https://github.com/user-attachments/assets/3f61d752-f6a7-41cc-a885-085282a6123f">Demo video</a>
-</video>
-
-If the player does not load on GitHub, click the link above to open the video in your browser or download it for local playback.
 
 # Productivity
 "Add a meeting to my calendar for tomorrow at 3pm"
