@@ -12,9 +12,12 @@ from ..agent.config import (
     search_root, smtp_config, google_calendar_config, slack_config, 
     spotify_config, desktop_enabled, github_config, notion_config,
     trello_config, jira_config, whatsapp_config, planning_mode, llm_backend,
-    hf_base_model, hf_merged_model_dir, hf_adapter_dir, hf_use_4bit
+    hf_base_model, hf_merged_model_dir, hf_adapter_dir, hf_use_4bit,
+    groq_api_key, groq_model
 )
 from ..agent.llm import LLM
+from ..agent.groq_llm import GroqLLM
+from ..agent.smart_executor import SmartExecutor
 # HFLLM is imported lazily in __init__ when backend == 'hf' to avoid torch dependency otherwise
 from ..agent.planner import Planner
 from ..agent.actions import Router
@@ -58,7 +61,26 @@ class DirectAgent:
         # Initialize LLM based on configured backend
         backend = llm_backend()
         self.planner_llm = None
-        if backend == "hf":
+        
+        if backend == "groq":
+            print("[DirectAgent] Using Groq backend (Llama 3.3 70B)")
+            self.llm = GroqLLM(
+                api_key=groq_api_key(),
+                model=groq_model()
+            )
+            self.planner_llm = self.llm
+        elif backend == "vllm":
+            from ..agent.vllm_llm import VLLMLlm
+            from ..agent.config import vllm_api_url, vllm_model, vllm_mode
+            api_url = vllm_api_url()
+            model = vllm_model()
+            mode = vllm_mode()
+            print(f"[DirectAgent] Using vLLM backend: {api_url}")
+            print(f"[DirectAgent] Model: {model}")
+            print(f"[DirectAgent] Mode: {mode} ({'detailed reasoning' if mode == 'thinking' else 'quick responses'})")
+            self.llm = VLLMLlm(base_url=api_url, model=model, mode=mode)
+            self.planner_llm = self.llm
+        elif backend == "hf":
             print("[DirectAgent] Using HuggingFace backend")
             # Get HF config values
             merged = hf_merged_model_dir()
@@ -256,6 +278,18 @@ class DirectAgent:
         # Initialize multi-step runner for complex workflows
         self.multi_step_runner = MultiStepRunner(self.llm, self.router, self.memory)
         print("[DirectAgent] Multi-step runner initialized")
+        
+        # Initialize SmartExecutor for function-calling based execution (Groq or vLLM)
+        if backend in ("groq", "vllm"):
+            self.smart_executor = SmartExecutor(
+                llm=self.llm,
+                router=self.router,
+                memory=self.memory,
+                vector_memory=self.vmem
+            )
+            print("[DirectAgent] SmartExecutor initialized (function calling enabled)")
+        else:
+            self.smart_executor = None
 
     def run(self, goal: str, conversation_context: str = "") -> Dict[str, Any]:
         """Run the agent with a goal and return a conversational response.
@@ -268,6 +302,26 @@ class DirectAgent:
         self.memory.log_message(run_id, "user", goal)
         
         try:
+            # ====== PRIMARY PATH: Use SmartExecutor with function calling ======
+            # This bypasses all the regex heuristics when Groq is available
+            if self.smart_executor is not None:
+                print(f"[DirectAgent] Using SmartExecutor for: {goal}")
+                result = self.smart_executor.execute(goal, conversation_context)
+                
+                self.memory.log_message(run_id, "assistant", result.response)
+                
+                return {
+                    "response": result.response,
+                    "run_id": run_id,
+                    "type": "clarification" if result.needs_clarification else ("action" if result.action_taken else "conversation"),
+                    "results": [result.action_taken] if result.action_taken else [],
+                    "needs_clarification": result.needs_clarification,
+                    "clarification_options": result.clarification_options or [],
+                    "success": result.success
+                }
+            
+            # ====== FALLBACK PATH: Legacy regex-based parsing (for non-Groq backends) ======
+            
             # Check if this is a simple question or requires action
             is_simple = self._is_simple_question(goal)
             print(f"DEBUG: Goal '{goal}' classified as simple question: {is_simple}")
@@ -867,7 +921,10 @@ Just ask me naturally, like you would a friend! For example:
         
         # Use the LLM for other questions
         try:
-            response = self.llm.generate(f"Answer this question briefly and helpfully: {goal}")
+            from ..agent.personality import get_personality_prompt, get_answer_prompt
+            context = self.conversation.get_context() if hasattr(self, 'conversation') else ""
+            personality_sys = get_personality_prompt(context)
+            response = self.llm.generate(f"Question: {goal}", system=personality_sys)
             return response
         except Exception:
             return "I'm not sure how to answer that. Could you try asking something else or give me a specific task to perform?"

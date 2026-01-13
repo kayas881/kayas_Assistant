@@ -50,14 +50,53 @@ def strong_model() -> str:
     return env_str("STRONG_MODEL", "")
 
 
-# HF backend configuration (optional)
+# LLM backend configuration
 def llm_backend() -> str:
-    """Select LLM backend: 'ollama' (default) | 'hf' | 'http'."""
+    """Select LLM backend: 'groq' | 'ollama' | 'hf' | 'http' | 'azure' | 'vllm'."""
     val = profile_get("models.backend", None)
     if val:
         return str(val).lower()
-    # Default to 'ollama' unless overridden by env/profile
-    return env_str("AGENT_LLM_BACKEND", "ollama").lower()
+    # Check env - support both KAYAS_BACKEND and AGENT_LLM_BACKEND for convenience
+    backend = env_str("KAYAS_BACKEND", "") or env_str("AGENT_LLM_BACKEND", "groq")
+    return backend.lower()
+
+
+# Groq configuration (free tier with Llama 3.3 70B)
+def groq_api_key() -> str:
+    """Get Groq API key from env."""
+    return env_str("GROQ_API_KEY", str(profile_get("models.groq.api_key", "")))
+
+
+def groq_model() -> str:
+    """Get Groq model name."""
+    return env_str("GROQ_MODEL", str(profile_get("models.groq.model", "llama-3.3-70b-versatile")))
+
+
+# vLLM remote backend config (self-hosted via ngrok)
+def vllm_api_url() -> str:
+    """Get vLLM API URL (ngrok or direct)."""
+    prof = profile_get("models.vllm.api_url", "")
+    if prof:
+        return str(prof)
+    return env_str("VLLM_API_URL", "")
+
+
+def vllm_model() -> str:
+    """Get vLLM model name."""
+    return env_str("VLLM_MODEL", str(profile_get("models.vllm.model", "Qwen/Qwen3-32B-AWQ")))
+
+
+def vllm_mode() -> str:
+    """Get Qwen3 mode: 'thinking' (detailed reasoning) or 'fast' (quick responses)."""
+    return env_str("VLLM_MODE", str(profile_get("models.vllm.mode", "thinking"))).lower()
+
+
+def vllm_max_context() -> int:
+    """Get vLLM max context length."""
+    val = profile_get("models.vllm.max_context", None)
+    if val is not None:
+        return int(val)
+    return int(env_str("VLLM_MAX_CONTEXT", "8192"))
 
 
 # Remote HTTP LLM backend config
@@ -324,3 +363,70 @@ def desktop_enabled() -> bool:
     prof = bool(profile_get("desktop.enabled", False))
     envv = env_str("DESKTOP_AUTOMATION_ENABLED", "0").lower() in ("1", "true", "yes")
     return bool(prof or envv)
+
+# Persistent API Key Management
+def _get_api_key_file() -> Path:
+    """Get the path to the persistent API key file."""
+    config_dir = Path.home() / ".kayas"
+    config_dir.mkdir(exist_ok=True)
+    return config_dir / "api_key.txt"
+
+
+def save_groq_api_key(api_key: str) -> bool:
+    """Save the Groq API key to a file for persistent storage."""
+    try:
+        key_file = _get_api_key_file()
+        key_file.write_text(api_key.strip(), encoding="utf-8")
+        key_file.chmod(0o600)  # Restrict permissions for security
+        return True
+    except Exception as e:
+        print(f"Warning: Could not save API key: {e}")
+        return False
+
+
+def load_groq_api_key_from_file() -> str:
+    """Load the Groq API key from persistent storage."""
+    try:
+        key_file = _get_api_key_file()
+        if key_file.exists():
+            return key_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def ensure_groq_api_key() -> str:
+    """Ensure Groq API key is set. Prompt user if needed."""
+    # 1. Check environment variable first
+    key = env_str("GROQ_API_KEY", "").strip()
+    if key:
+        return key
+    
+    # 2. Check saved file
+    key = load_groq_api_key_from_file().strip()
+    if key:
+        os.environ["GROQ_API_KEY"] = key
+        return key
+    
+    # 3. Prompt user
+    print("\n" + "="*60)
+    print("Groq API Key Required")
+    print("="*60)
+    print("\nYou need a Groq API key to use the SmartExecutor.")
+    print("Get one free at: https://console.groq.com/keys")
+    print("\nEnter your Groq API key (or 'skip' to use Ollama instead):")
+    key = input("Groq API Key: ").strip()
+    
+    if key.lower() == "skip":
+        print("Skipping Groq. Using Ollama backend instead.")
+        return ""
+    
+    if key:
+        # Save for future use
+        if save_groq_api_key(key):
+            print(f"✅ API key saved to {_get_api_key_file()}")
+        os.environ["GROQ_API_KEY"] = key
+        return key
+    
+    print("⚠️  No API key provided. Using Ollama backend instead.")
+    return ""

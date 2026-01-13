@@ -11,12 +11,10 @@ from .config import preferred_search_base, default_notes_filename
 from .actions import parse_actions
 from .plan_candidate import PlanCandidate, compute_risk_score, estimate_time
 from ..training.preference_model import score_plan
+from .personality import get_planner_prompt
 
 
-PLANNER_SYSTEM = (
-    "You are a concise planner. Given a user's goal, produce a numbered list of 2-6 atomic steps that a simple executor can perform. "
-    "Prefer filesystem actions like create file, write content. Keep steps terse."
-)
+PLANNER_SYSTEM = get_planner_prompt()
 
 
 def parse_steps(text: str) -> List[str]:
@@ -254,13 +252,17 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
         # Smart defaults heuristics -------------------------------------------------
         
         # ========== WHATSAPP SEND MESSAGE (early check - works without 'whatsapp' keyword) ==========
-        # Pattern: "send message to X saying Y" or "message X saying Y"
+        # Pattern: "send message to X saying Y" or "message X saying Y" or "send message on whatsapp to X saying Y"
         if ("send" in g or "message" in g) and ("saying" in g or "that" in g or "with" in g):
             # Parse: "send message to Contact saying message" or "message Contact saying text"
-            send_match = re.search(r"(?:send\s+)?(?:message|msg|text)\s+(?:to\s+)?([A-Za-z][A-Za-z0-9_\s]*?)\s+(?:saying|that|with)\s+(.+)$", goal, re.IGNORECASE)
+            # Also handle "send message on whatsapp to X saying Y" by removing "on whatsapp" first
+            goal_cleaned = re.sub(r"\s+on\s+whatsapp", "", goal, flags=re.IGNORECASE)
+            send_match = re.search(r"(?:send\s+)?(?:a\s+)?(?:message|msg|text)\s+(?:to\s+)?([A-Za-z][A-Za-z0-9_\s]*?)\s+(?:saying|that|with)\s+(.+)$", goal_cleaned, re.IGNORECASE)
             if send_match:
                 contact = send_match.group(1).strip()
                 message = send_match.group(2).strip().strip('"').strip("'")
+                # Remove "my friend" prefix if present
+                contact = re.sub(r"^(?:my\s+)?(?:friend\s+|buddy\s+|mate\s+)?", "", contact, flags=re.IGNORECASE).strip()
                 if contact and message:
                     heuristic = [{"tool": "whatsapp.send_message", "args": {"contact": contact, "message": message}}]
                     raw = json.dumps(heuristic)
@@ -794,17 +796,19 @@ def plan_structured(llm: LLM, goal: str, reuse_filename: str | None = None, feed
             # Send message via WhatsApp
             if any(word in g for word in ["send", "message", "text", "tell", "say"]) and not any(word in g for word in ["image", "photo", "picture", "video", "file", "document", "location", "contact"]):
                 # Extract contact name and message
-                # Patterns: "message to John saying X", "send whatsapp to John", "tell John X"
+                # Patterns: "message to John saying X", "send whatsapp to John", "tell John X", "send whatsapp to my friend abdus saying X"
+                
+                # First try to extract contact before "saying" or "that"
                 contact_match = re.search(
-                    r"(?:message\s+)?(?:to\s+)?([A-Z][a-zA-Z]+)(?:\s+(?:saying|that|with|:|\"|on\s+whatsapp))",
+                    r"(?:to\s+)?(?:my\s+)?(?:friend\s+|buddy\s+|mate\s+)?([a-zA-Z][a-zA-Z0-9_]*)\s+(?:saying|that|with|:)",
                     goal, re.IGNORECASE
                 )
                 if not contact_match:
                     # Try: "to John" at end or before "saying"
-                    contact_match = re.search(r"to\s+([A-Z][a-zA-Z]+)(?:\s|$)", goal, re.IGNORECASE)
+                    contact_match = re.search(r"to\s+(?:my\s+)?(?:friend\s+)?([a-zA-Z][a-zA-Z0-9_]*)", goal, re.IGNORECASE)
                 if not contact_match:
                     # Try: "tell John"
-                    contact_match = re.search(r"tell\s+([A-Z][a-zA-Z]+)", goal, re.IGNORECASE)
+                    contact_match = re.search(r"tell\s+([a-zA-Z][a-zA-Z0-9_]*)", goal, re.IGNORECASE)
                 contact = contact_match.group(1).strip() if contact_match else ""
                 
                 msg_match = re.search(r"(?:saying|that|with|:)\s*\"?([^\"]+)\"?$", goal, re.IGNORECASE)

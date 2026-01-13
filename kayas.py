@@ -14,6 +14,10 @@ if sys.platform == "win32":
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+# Ensure Groq API key is available before importing agents
+from src.agent.config import ensure_groq_api_key
+ensure_groq_api_key()
+
 from src.voice.chat_agent import ChatAgent, ChatAgentConfig
 from src.voice.gui import ChatGUI
 

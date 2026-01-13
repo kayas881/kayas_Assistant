@@ -643,6 +643,32 @@ class Router:
                     filename=a["filename"],
                     region=a.get("region")
                 )
+            # Vision (AI image analysis) tools
+            if t == "vision.analyze" or t == "vision.describe":
+                vis = self.executors.get("vision")
+                if not vis:
+                    return {"error": "Vision executor not available. Make sure Ollama is running with llava model.", "tool": t}
+                return vis.analyze_image(
+                    image_path=a.get("image_path", ""),
+                    prompt=a.get("prompt", "Describe this image in detail")
+                )
+            if t == "vision.answer":
+                vis = self.executors.get("vision")
+                if not vis:
+                    return {"error": "Vision executor not available.", "tool": t}
+                return vis.answer_about_image(
+                    image_path=a.get("image_path", ""),
+                    question=a.get("question", "What is in this image?")
+                )
+            if t == "vision.compare":
+                vis = self.executors.get("vision")
+                if not vis:
+                    return {"error": "Vision executor not available.", "tool": t}
+                return vis.compare_images(
+                    image_path1=a.get("image_path1", ""),
+                    image_path2=a.get("image_path2", ""),
+                    prompt=a.get("prompt", "Compare these images")
+                )
             # WhatsApp Web automation
             if t.startswith("whatsapp."):
                 wa = self.executors.get("whatsapp")

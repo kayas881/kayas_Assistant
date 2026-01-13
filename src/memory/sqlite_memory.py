@@ -118,3 +118,60 @@ class SQLiteMemory:
                 ),
             )
             conn.commit()
+
+    def get_recent_messages(self, limit: int = 20) -> list:
+        """Get recent messages from conversation history."""
+        with self._connect() as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT run_id, role, content, ts FROM messages ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = c.fetchall()
+            return [
+                {"run_id": r[0], "role": r[1], "content": r[2], "timestamp": r[3]}
+                for r in reversed(rows)  # Reverse to get chronological order
+            ]
+    
+    def get_last_session_summary(self) -> dict:
+        """Get a summary of the last session for continuity."""
+        with self._connect() as conn:
+            c = conn.cursor()
+            
+            # Get last interaction time
+            c.execute("SELECT ts FROM messages ORDER BY id DESC LIMIT 1")
+            last_row = c.fetchone()
+            last_time = last_row[0] if last_row else None
+            
+            # Get last few user messages (topics discussed)
+            c.execute(
+                "SELECT content FROM messages WHERE role='user' ORDER BY id DESC LIMIT 5"
+            )
+            recent_topics = [r[0][:100] for r in c.fetchall()]
+            
+            # Get last assistant response
+            c.execute(
+                "SELECT content FROM messages WHERE role='assistant' ORDER BY id DESC LIMIT 1"
+            )
+            last_response_row = c.fetchone()
+            last_response = last_response_row[0][:200] if last_response_row else None
+            
+            # Get recent actions
+            c.execute(
+                "SELECT name FROM actions ORDER BY id DESC LIMIT 5"
+            )
+            recent_actions = [r[0] for r in c.fetchall()]
+            
+            return {
+                "last_interaction": last_time,
+                "recent_topics": recent_topics,
+                "last_response": last_response,
+                "recent_actions": recent_actions
+            }
+    
+    def get_message_count(self) -> int:
+        """Get total number of messages."""
+        with self._connect() as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM messages")
+            return c.fetchone()[0]

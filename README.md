@@ -5,60 +5,69 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
-![LLM](https://img.shields.io/badge/LLM-Qwen2.5-orange.svg)
+![LLM](https://img.shields.io/badge/LLM-Qwen3--32B-orange.svg)
+![Voice](https://img.shields.io/badge/Voice-Edge%20TTS-green.svg)
 
-**An intelligent, voice-enabled AI assistant that can automate your desktop, browse the web, and integrate with your favorite apps.**
+**An intelligent, voice-enabled AI assistant that understands you, remembers everything, and automates your digital life.**
 
-[Features](#-features) • [Architecture](#-architecture) • [Installation](#-installation) • [Usage](#-usage) • [Integrations](#-integrations)
+[Features](#-features) • [Demo](#-demo) • [Architecture](#-architecture) • [Installation](#-installation) • [Usage](#-usage) • [Voice Mode](#-voice-mode)
 
+</div>
+
+---
+
+## 🎥 Demo
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/84f3ddf8-f055-472e-9134-be1e9cbe1cfa" width="60%"> </video>
 </div>
 
 ---
 
 ## 🎯 Overview
 
-Kayas is a **fully autonomous AI assistant** built from scratch that combines:
+Kayas is a **fully autonomous AI assistant** — not just a chatbot, but an actual AI friend that:
 
-- 🎤 **Voice Control** — Natural speech input via Whisper ASR + Text-to-Speech responses
-- 🖥️ **Desktop Automation** — Control any Windows application via UI Automation & PyAutoGUI
-- 🌐 **Web Automation** — Playwright-based browser control with visual perception
-- 🧠 **Local LLM** — Runs entirely offline using quantized Qwen2.5-3B with custom LoRA fine-tuning
-- 🔌 **Multi-Platform Integrations** — WhatsApp, Slack, Spotify, GitHub, Jira, Notion, Google Calendar, and more
-
-**No cloud APIs required** — your data stays on your machine.
+- 🧠 **Understands Context** — Uses Qwen3-32B with deep reasoning capabilities
+- 💬 **Remembers Everything** — Persistent memory across sessions (1000+ messages)
+- 🎤 **Natural Voice** — Microsoft Edge neural TTS + wake word detection ("Hey Kayas")
+- 🖥️ **Controls Your PC** — Desktop automation, web browsing, file management
+- 📱 **App Integrations** — WhatsApp, Spotify, GitHub, Jira, Notion, Calendar, and more
+- 🔧 **Function Calling** — Reliable structured tool execution via JSON
 
 ---
 
 ## ✨ Features
 
-### 🎙️ Voice Interface
-- **Wake-word detection** with continuous listening mode
-- **Whisper-based STT** for accurate speech recognition
-- **Natural TTS responses** via pyttsx3
-- **Conversation memory** — remembers context across sessions
+### 🧠 AI Brain (Qwen3-32B-AWQ)
+- **Thinking Mode** — Deep reasoning with `<think>` blocks for complex tasks
+- **Function Calling** — Structured JSON tool calls for reliable execution
+- **Personality System** — Remembers your name, preferences, relationships
+- **Session Continuity** — Picks up where you left off, even after restarts
+
+### 🎙️ Voice Interface (NEW!)
+- **Edge TTS** — Natural Microsoft neural voices (Jenny, Aria, Guy)
+- **Wake Word Detection** — "Hey Kayas" activation with accent support
+- **Continuous Listening** — Always-on mode with low CPU usage
+- **faster-whisper STT** — Accurate speech recognition (small model, 484MB)
 
 ### 🖥️ Desktop Automation
-- **UI Automation** (pywinauto) — Interact with any Windows application
-- **OCR-based fallback** (Tesseract) — Read text from any screen element
-- **Computer Vision** — OpenCV-powered visual element detection
-- **Multi-layer perception engine** — Combines UIA + OCR + Vision for maximum reliability
+- **UI Automation** (pywinauto) — Control any Windows application
+- **Multi-Layer Perception** — UIA + OCR + Computer Vision combined
+- **Smart Clicking** — Handles dropdowns, menus, dynamic elements
+- **Screenshot Analysis** — OCR-based fallback for any screen element
 
-### 🌐 Web Automation
-- **Playwright browser control** — Headless or visible Chrome/Firefox
-- **Session persistence** — Stay logged in across restarts
-- **Smart element detection** — CSS selectors + visual matching
-- **WhatsApp Web automation** — Full messaging, media, groups, and more
+### 🌐 Web & App Control
+- **Playwright Browser** — Headless or visible Chrome/Firefox
+- **WhatsApp Web** — Full messaging, media, groups, reply-to-message
+- **Spotify** — Playback control, search, playlists
+- **GitHub/Jira/Notion** — Issue tracking, project management
 
-### 🧠 AI Planning & Execution
-- **Structured JSON tool-calls** — Reliable, parseable output format
-- **ReAct reasoning mode** — Think step-by-step for complex tasks
-- **Multi-step execution** — Break down complex goals into subtasks
-- **Safety guardrails** — Blocks dangerous operations
-
-### 📊 Memory & Learning
-- **SQLite conversation memory** — Persistent chat history
-- **Vector memory** (ChromaDB) — Semantic search over past interactions
-- **Fine-tuning pipeline** — Train custom LoRA adapters on your usage patterns
+### 📊 Memory System
+- **SQLite Database** — Persistent conversation history
+- **User Profile** — Name, preferences, timezone, interests
+- **Contact Relationships** — Remembers who your friends are
+- **Vector Memory** — Semantic search over past conversations
 
 ---
 
@@ -69,26 +78,27 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │                        KAYAS ASSISTANT                          │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │   Voice UI   │    │   Chat GUI   │    │   CLI Mode   │       │
-│  │   (STT/TTS)  │    │  (Tkinter)   │    │   (Rich)     │       │
+│  │  Voice Mode  │    │   CLI Mode   │    │   Web GUI    │       │
+│  │(Edge TTS+STT)│    │   (Rich)     │    │   (HTML)     │       │
 │  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘       │
-│         │                   │                   │               │
 │         └───────────────────┴───────────────────┘               │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
-│  │                    AGENT CORE                           │    │
-│  │  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌──────────┐   │    │
-│  │  │ Planner │  │ Executor │  │ Router  │  │  Safety  │   │    │
-│  │  │  (LLM)  │  │ Manager  │  │         │  │ Checker  │   │    │
-│  │  └─────────┘  └──────────┘  └─────────┘  └──────────┘   │    │
+│  │                   DIRECT AGENT                          │    │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │    │
+│  │  │SmartExecutor │  │   Planner    │  │    Safety    │   │    │
+│  │  │(Tool Router) │  │  (Thinking)  │  │  Guardrails  │   │    │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘   │    │
 │  └──────────────────────────┬──────────────────────────────┘    │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
-│  │                    LLM BACKENDS                         │    │
-│  │  ┌──────────┐  ┌───────────────┐  ┌─────────────────┐   │    │
-│  │  │  Ollama  │  │  HuggingFace  │  │   HTTP Remote   │   │    │
-│  │  │  (API)   │  │  (4-bit+LoRA) │  │   (Any API)     │   │    │
-│  │  └──────────┘  └───────────────┘  └─────────────────┘   │    │
+│  │                    LLM BACKEND                          │    │
+│  │  ┌────────────────────────────────────────────────┐     │    │
+│  │  │   vLLM (Qwen3-32B-AWQ) via ngrok/Kaggle        │     │    │
+│  │  │   - Function calling with tools                │     │    │
+│  │  │   - Thinking mode for complex reasoning        │     │    │
+│  │  │   - Custom fine-tuned adapter                  │     │    │
+│  │  └────────────────────────────────────────────────┘     │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
@@ -97,20 +107,17 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 │  │  │Desktop  │  │ Browser │  │WhatsApp │  │ Spotify  │    │    │
 │  │  │(UIA+CV) │  │(Playwrt)│  │  (Web)  │  │  (API)   │    │    │
 │  │  ├─────────┤  ├─────────┤  ├─────────┤  ├──────────┤    │    │
-│  │  │  Slack  │  │  GitHub │  │  Jira   │  │  Notion  │    │    │
-│  │  │  (SDK)  │  │  (API)  │  │  (API)  │  │  (API)   │    │    │
-│  │  ├─────────┤  ├─────────┤  ├─────────┤  ├──────────┤    │    │
-│  │  │Calendar │  │  Email  │  │Filesys  │  │  Audio   │    │    │
-│  │  │(Google) │  │ (SMTP)  │  │ (Local) │  │(Record)  │    │    │
+│  │  │Explorer │  │  GitHub │  │  Jira   │  │  Notion  │    │    │
+│  │  │  (UIA)  │  │  (API)  │  │  (API)  │  │  (API)   │    │    │
 │  │  └─────────┘  └─────────┘  └─────────┘  └──────────┘    │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                             │                                   │
 │  ┌──────────────────────────▼──────────────────────────────┐    │
 │  │                      MEMORY                             │    │
-│  │  ┌────────────────┐        ┌─────────────────────────┐  │    │
-│  │  │ SQLite Memory  │        │  ChromaDB Vector Store  │  │    │
-│  │  │ (Conversations)│        │  (Semantic Search)      │  │    │
-│  │  └────────────────┘        └─────────────────────────┘  │    │
+│  │  ┌────────────────┐  ┌─────────────┐  ┌─────────────┐   │    │
+│  │  │ SQLite Memory  │  │User Profile │  │  Contacts   │   │    │
+│  │  │ (1000+ msgs)   │  │(Name, Prefs)│  │(Friendships)│   │    │
+│  │  └────────────────┘  └─────────────┘  └─────────────┘   │    │
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -122,20 +129,20 @@ Kayas is a **fully autonomous AI assistant** built from scratch that combines:
 ### Prerequisites
 
 - **Python 3.10+**
-- **Windows 10/11** (for desktop automation features)
-- **Tesseract OCR** — [Download here](https://github.com/UB-Mannheim/tesseract/wiki)
-- **Chrome/Chromium** (for browser automation)
+- **Windows 10/11** (for desktop automation)
+- **Tesseract OCR** — [Download](https://github.com/UB-Mannheim/tesseract/wiki)
+- **Chrome** (for browser automation)
 
 ### Quick Start
 
 ```bash
 # Clone the repository
-git clone https://github.com/kayas881/kayas_Assistant.git
-cd kayas_Assistant
+git clone https://github.com/kayas881/kayas.git
+cd kayas
 
 # Create virtual environment
-python -m venv venv
-venv\Scripts\activate
+python -m venv .venv
+.venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -147,108 +154,130 @@ playwright install chromium
 python kayas.py
 ```
 
+### Voice Mode Dependencies
+
+```bash
+# For voice features
+pip install edge-tts faster-whisper sounddevice pygame
+```
+
 ### Configuration
 
-Create a `.env` file for API keys (optional):
+Create a `.env` file:
 
 ```env
+# LLM Backend (vLLM via ngrok)
+VLLM_BASE_URL=https://your-ngrok-url.ngrok-free.dev
+VLLM_MODEL=Qwen/Qwen3-32B-AWQ
+
 # Optional integrations
-SLACK_BOT_TOKEN=xoxb-...
 SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
 GITHUB_TOKEN=ghp_...
-JIRA_API_TOKEN=...
-NOTION_TOKEN=...
 ```
 
 ---
 
 ## 💻 Usage
 
-### Command Line
+### Command Line Modes
 
 ```bash
-# Interactive CLI mode
+# Interactive CLI (default)
 python kayas.py
 
-# GUI mode
-python kayas.py --gui
-
-# Voice-enabled mode
+# Voice mode with wake word
 python kayas.py --continuous
 
-# Disable voice (text-only)
+# Text-only mode
 python kayas.py --no-voice
+
+# Push-to-talk voice
+python kayas.py
 ```
 
 ### Example Commands
 
 ```
+# Casual conversation
+"Hey, how's it going?"
+"Remember my friend Abdus? He's the one I play games with."
+
 # Desktop Automation
 "Open Notepad and type Hello World"
-"Take a screenshot and save it to my desktop"
-"Find the Chrome window and click the search bar"
+"Take a screenshot and save it"
 
-# Web Automation
+# WhatsApp
+"Send a message to Abdus saying I'll be online soon"
+"Read my unread WhatsApp messages"
+
+# Web
 "Search Google for Python tutorials"
 "Open YouTube and play some music"
 
-# WhatsApp (NEW!)
-"Send a WhatsApp message to John saying I'll be late"
-"Read my unread WhatsApp messages"
-"Send image C:\Photos\vacation.jpg to Family Group"
-
 # Productivity
-"Add a meeting to my calendar for tomorrow at 3pm"
-"Create a new Jira ticket for the login bug"
-"Send a Slack message to #general"
-
-# Media
-"Play my liked songs on Spotify"
-"Skip to the next track"
-
-# System
-"What processes are using the most CPU?"
-"Open the folder D:\Projects"
+"What's on my calendar today?"
+"Create a Jira ticket for the login bug"
 ```
 
 ---
 
-## 🔌 Integrations
+## 🎙️ Voice Mode
 
-| Integration | Status | Description |
-|-------------|--------|-------------|
-| **WhatsApp Web** | ✅ Complete | Send/receive messages, media, groups, contacts |
-| **Spotify** | ✅ Complete | Playback control, playlists, search |
-| **Slack** | ✅ Complete | Send messages, read channels, manage threads |
-| **GitHub** | ✅ Complete | Create issues, PRs, manage repos |
-| **Google Calendar** | ✅ Complete | Create/read/update events |
-| **Jira** | ✅ Complete | Create issues, update status, search |
-| **Notion** | ✅ Complete | Create pages, update databases |
-| **Email (SMTP)** | ✅ Complete | Send emails with attachments |
-| **Trello** | ✅ Complete | Create cards, manage boards |
-| **Local Files** | ✅ Complete | Read, write, search, organize |
+### Wake Word Activation
+
+Say **"Hey Kayas"** (or variations like "Hey Guys", "Hey Kaya") to activate.
+
+Supported wake words:
+- "Hey Kayas", "Hi Kayas", "Kayas"
+- "Hey Guys" (common Whisper transcription for accents)
+- "Hey Chaos", "Hey Kaya", "Hey Gaia"
+
+### Voice Settings
+
+- **TTS Voice**: Microsoft Jenny (natural, friendly)
+- **STT Model**: faster-whisper small (484MB, good accuracy)
+- **Wake Word**: Whisper tiny for low-latency detection
+
+### Accent Support
+
+The wake word detector includes phonetic variations for Indian and other accents. If Whisper transcribes "Kayas" differently, it will still trigger.
 
 ---
 
-## 🧠 LLM Configuration
+## 🧠 AI Capabilities
 
-Kayas supports multiple LLM backends:
+### Thinking Mode
+For complex tasks, Kayas uses deep reasoning:
+```
+User: "Should I learn React or Vue for my project?"
 
-### 1. Ollama (Recommended for beginners)
-```bash
-# Install Ollama, then:
-ollama pull qwen2.5:3b
+Kayas: <think>
+Let me consider the user's context...
+- They mentioned being a beginner earlier
+- React has more job opportunities
+- Vue is easier to learn
+</think>
+
+Given that you're just starting out, I'd recommend Vue first...
 ```
 
-### 2. HuggingFace Local (Best performance)
-- Uses 4-bit quantization for low VRAM usage
-- Custom LoRA fine-tuning included
-- Runs entirely offline
+### Function Calling
+Reliable tool execution via structured JSON:
+```json
+{
+  "tool": "whatsapp.send_message",
+  "args": {
+    "contact": "Abdus",
+    "message": "Hey, I'll be online in 10 mins!"
+  }
+}
+```
 
-### 3. Remote HTTP API
-- Connect to any OpenAI-compatible API
-- Use cloud models when needed
+### Memory & Personalization
+- Remembers your name, preferences, timezone
+- Tracks relationships (friends, family, colleagues)
+- References past conversations naturally
 
 ---
 
@@ -257,109 +286,78 @@ ollama pull qwen2.5:3b
 ```
 kayas/
 ├── kayas.py                 # Main entry point
-├── requirements.txt         # Python dependencies
+├── requirements.txt         # Dependencies
+├── index.html               # Web GUI
 ├── src/
-│   ├── agent/               # Core AI agent logic
-│   │   ├── planner.py       # LLM-based task planning
-│   │   ├── actions.py       # Action router
-│   │   ├── execution_manager.py
-│   │   ├── llm.py           # Ollama backend
-│   │   ├── hf_llm.py        # HuggingFace backend
-│   │   └── safety.py        # Safety guardrails
-│   ├── executors/           # Platform integrations
-│   │   ├── desktop_exec.py  # Windows UI automation
-│   │   ├── browser_exec.py  # Playwright web control
-│   │   ├── whatsapp_exec.py # WhatsApp Web automation
-│   │   ├── spotify_exec.py  # Spotify control
-│   │   └── ...              # 15+ more executors
+│   ├── agent/               # AI core
+│   │   ├── direct_agent.py  # Main agent class
+│   │   ├── smart_executor.py # Function calling
+│   │   ├── planner.py       # Task planning
+│   │   ├── http_llm.py      # vLLM backend
+│   │   └── safety.py        # Safety checks
+│   ├── executors/           # Tool implementations
+│   │   ├── whatsapp_exec.py # WhatsApp automation
+│   │   ├── desktop_exec.py  # Windows UI control
+│   │   ├── browser_exec.py  # Web automation
+│   │   ├── spotify_exec.py  # Music control
+│   │   └── ...              # 15+ more
 │   ├── voice/               # Voice interface
-│   │   ├── stt.py           # Speech-to-text (Whisper)
-│   │   ├── tts.py           # Text-to-speech
-│   │   └── gui.py           # Tkinter GUI
-│   └── memory/              # Persistence layer
-│       ├── sqlite_memory.py # Conversation storage
-│       └── vector_memory.py # Semantic search
-├── brain_training/          # Fine-tuning pipeline
-│   ├── finetuning.py        # LoRA training script
-│   └── final_adapter/       # Trained model weights
-└── artifacts/               # Generated outputs
+│   │   ├── edge_tts.py      # Microsoft neural TTS
+│   │   ├── wake_word.py     # Wake word detection
+│   │   ├── enhanced_voice.py # Combined voice agent
+│   │   └── chat_agent.py    # Voice + AI integration
+│   └── memory/              # Persistence
+│       ├── sqlite_memory.py # Conversation DB
+│       ├── user_profile.py  # User preferences
+│       └── session_continuity.py # Session awareness
+└── brain_training/          # Fine-tuning
+    ├── finetuning.py        # LoRA training
+    └── final_adapter/       # Trained weights
 ```
 
 ---
 
-## 🎓 Technical Highlights
+## 🔌 Integrations
 
-### Multi-Layer Perception Engine
-The desktop automation uses a **3-layer perception system**:
-
-1. **UI Automation (pywinauto)** — Direct access to Windows accessibility APIs
-2. **OCR (Tesseract)** — Extract text from any visual element
-3. **Computer Vision (OpenCV)** — Template matching and visual detection
-
-This ensures maximum reliability across all Windows applications.
-
-### Structured Tool Calling
-The LLM outputs structured JSON tool calls:
-```json
-{
-  "tool": "whatsapp.send_message",
-  "args": {
-    "contact": "John",
-    "message": "Hey, running late!"
-  }
-}
-```
-
-This is more reliable than free-form text parsing and enables complex multi-step workflows.
-
-### Session Persistence
-- Browser sessions saved to disk — stay logged into WhatsApp, etc.
-- Conversation memory persists across restarts
-- Vector embeddings enable semantic search over history
+| Integration | Status | Description |
+|-------------|--------|-------------|
+| **WhatsApp Web** | ✅ Complete | Messages, media, groups, reply-to |
+| **Spotify** | ✅ Complete | Playback, search, playlists |
+| **GitHub** | ✅ Complete | Issues, PRs, repos |
+| **Jira** | ✅ Complete | Issues, status, search |
+| **Notion** | ✅ Complete | Pages, databases |
+| **Google Calendar** | ✅ Complete | Events, reminders |
+| **File Explorer** | ✅ Complete | Navigate, create, organize |
+| **Desktop Apps** | ✅ Complete | Any Windows application |
 
 ---
 
-## 🛠️ Development
+## 🛠️ Tech Stack
 
-### Running Tests
-```bash
-pytest test_planner.py -v
-```
-
-### Fine-tuning the Model
-```bash
-cd brain_training
-python finetuning.py
-```
-
-### Adding New Executors
-1. Create `src/executors/my_exec.py`
-2. Register tools in `src/agent/planner.py`
-3. Add routing in `src/agent/actions.py`
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please read our contributing guidelines first.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+| Component | Technology |
+|-----------|------------|
+| **LLM** | Qwen3-32B-AWQ via vLLM |
+| **Inference** | Kaggle GPU + ngrok tunnel |
+| **TTS** | Microsoft Edge TTS (neural voices) |
+| **STT** | faster-whisper (OpenAI Whisper) |
+| **Desktop Automation** | pywinauto + PyAutoGUI |
+| **Web Automation** | Playwright |
+| **OCR** | Tesseract + EasyOCR |
+| **Computer Vision** | OpenCV |
+| **Database** | SQLite |
+| **Vector Search** | ChromaDB |
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
 ## 👤 Author
 
-**Kayas** — [GitHub](https://github.com/kayas881)
+**Ayan (Kayas)** — [GitHub](https://github.com/kayas881)
 
 ---
 
@@ -367,6 +365,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Built with ❤️ and Python**
 
-*If you find this project useful, please give it a ⭐!*
+*Kayas — Your AI friend that actually understands.*
 
 </div>

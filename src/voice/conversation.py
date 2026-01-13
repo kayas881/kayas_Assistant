@@ -14,6 +14,7 @@ from .direct_agent import DirectAgent
 from ..memory.sqlite_memory import SQLiteMemory, MemoryConfig
 from ..memory.vector_memory import VectorMemory, VectorMemoryConfig
 from ..agent.config import db_path, chroma_dir, embed_model
+from ..agent.personality import get_personality_prompt
 
 
 @dataclass
