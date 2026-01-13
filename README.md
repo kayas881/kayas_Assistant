@@ -37,10 +37,6 @@ Kayas is a **fully autonomous AI assistant** — not just a chatbot, but an actu
 
 ---
 
-## 🎥 Demo
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/84f3ddf8-f055-472e-9134-be1e9cbe1cfa" width="60%"> </video>
-</div>
 
 
 ## ✨ Features
