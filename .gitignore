@@ -97,8 +97,10 @@ desktop.ini
 # Whisper/ML models (downloaded at runtime)
 models/
 *.bin
+
+# Large model files (upload to HuggingFace instead)
 *.safetensors
-!brain_training/**/*.safetensors
+brain_training/final_adapter/adapter_model.safetensors
 
 # HuggingFace cache
 .cache/
