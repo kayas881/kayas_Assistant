@@ -49,6 +49,7 @@ from ..executors.uia_proxy import UIAutomationProxy, UIAProxyConfig
 from ..executors.ocr_exec import OCRExecutor, OCRConfig
 from ..executors.cv_exec import CVExecutor, CVConfig
 from ..executors.perception_engine import PerceptionEngine, PerceptionConfig
+from ..executors.vl_vision_exec import VLVisionExecutor, VLVisionConfig
 from ..memory.sqlite_memory import MemoryConfig, SQLiteMemory
 from ..memory.vector_memory import VectorMemory, VectorMemoryConfig
 from ..agent.multi_step_runner import MultiStepRunner
@@ -228,6 +229,19 @@ class DirectAgent:
         except Exception:
             self.perception = None
         
+        # Vision-Language executor (uses remote Qwen3-VL for understanding images/screens)
+        try:
+            from ..agent.config import vllm_api_url
+            vl_url = vllm_api_url()
+            if vl_url:
+                self.vl_vision_exec = VLVisionExecutor(VLVisionConfig(base_url=vl_url))
+                print(f"[DirectAgent] VL Vision executor initialized (using {vl_url})")
+            else:
+                self.vl_vision_exec = None
+        except Exception as e:
+            print(f"[DirectAgent] VL Vision not available: {e}")
+            self.vl_vision_exec = None
+        
         # Initialize router
         self.router = Router({
             "fs": self.fs,
@@ -258,6 +272,7 @@ class DirectAgent:
             "perception": self.perception,
             "whatsapp": self.whatsapp_exec,
             "explorer": self.explorer_exec,
+            "vl_vision": self.vl_vision_exec,
         })
         
         # Initialize ReAct agent (for multi-step reasoning)
@@ -275,9 +290,17 @@ class DirectAgent:
             embed_model=embed_model()
         ))
         
-        # Initialize multi-step runner for complex workflows
-        self.multi_step_runner = MultiStepRunner(self.llm, self.router, self.memory)
-        print("[DirectAgent] Multi-step runner initialized")
+        # Initialize multi-step runner for complex workflows (with vision if available)
+        self.multi_step_runner = MultiStepRunner(
+            self.llm, 
+            self.router, 
+            self.memory,
+            vl_vision=self.vl_vision_exec  # Pass vision for visual state awareness
+        )
+        if self.vl_vision_exec:
+            print("[DirectAgent] Multi-step runner initialized (vision-enabled)")
+        else:
+            print("[DirectAgent] Multi-step runner initialized")
         
         # Initialize SmartExecutor for function-calling based execution (Groq or vLLM)
         if backend in ("groq", "vllm"):

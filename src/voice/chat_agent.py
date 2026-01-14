@@ -109,6 +109,45 @@ class ChatAgent:
         elif self.voice_agent:
             return self.voice_agent.listen_once(timeout)
         return None
+    
+    def _listen_with_confirmation(self, timeout: float = 10.0) -> Optional[str]:
+        """
+        Listen with confirmation for low-confidence transcriptions.
+        
+        If confidence is below threshold, asks user to confirm.
+        """
+        if not self.enhanced_voice:
+            return self._listen(timeout)
+        
+        result = self.enhanced_voice.listen_with_confidence(timeout)
+        if not result:
+            return None
+        
+        text, confidence = result
+        
+        # Check if we need confirmation
+        if confidence < self.enhanced_voice.config.low_confidence_threshold:
+            if self.enhanced_voice.config.ask_confirmation_on_low:
+                # Ask for confirmation
+                self._speak(f"Did you say: {text}?")
+                print("   [Confirming - say 'yes', 'no', or repeat your message]")
+                
+                # Listen for confirmation
+                confirm_result = self.enhanced_voice.listen_with_confidence(timeout=5.0)
+                if confirm_result:
+                    confirm_text, _ = confirm_result
+                    confirm_lower = confirm_text.lower().strip()
+                    
+                    if confirm_lower in ['yes', 'yeah', 'yep', 'correct', 'right', 'that is correct']:
+                        return text
+                    elif confirm_lower in ['no', 'nope', 'wrong', 'not']:
+                        self._speak("Sorry, please say it again.")
+                        return self._listen(timeout)
+                    else:
+                        # They repeated or said something different, use that
+                        return confirm_text
+        
+        return text
 
     def start_voice_mode(self):
         """Start voice interaction mode."""
@@ -287,9 +326,9 @@ class ChatAgent:
                     # Text input
                     self._process_text_command(user_input)
                 else:
-                    # Voice input
+                    # Voice input with confirmation for uncertain transcriptions
                     print("Listening... speak now")
-                    text = self._listen(timeout=10.0)
+                    text = self._listen_with_confirmation(timeout=15.0)
                     if text:
                         self._process_voice_command(text)
                     else:
@@ -306,11 +345,93 @@ class ChatAgent:
     def _process_voice_command(self, text: str):
         """Process a voice command."""
         print(f"\nYou said: {text}")
+        
+        # Check for correction patterns and auto-learn
+        self._check_for_correction(text)
+        
         self._process_command(text)
+    
+    def _check_for_correction(self, text: str):
+        """
+        Detect when user is correcting a transcription error and learn from it.
+        
+        Patterns:
+        - "not X, I mean Y" / "not X, I said Y" 
+        - "I said Y, not X"
+        - "it's Y not X"
+        """
+        if not self.enhanced_voice:
+            return
+        
+        import re
+        text_lower = text.lower()
+        
+        # Pattern: "not X, I mean/said Y" or "not X I mean Y"
+        match = re.search(r"not\s+(\w+)[,.]?\s*i\s*(?:mean|said|meant)\s+(\w+)", text_lower)
+        if match:
+            wrong, right = match.group(1), match.group(2)
+            self.enhanced_voice.learn_correction(wrong, right.capitalize())
+            print(f"   [Auto-learned] Will replace '{wrong}' with '{right.capitalize()}' in future")
+            return
+        
+        # Pattern: "I said/mean Y, not X"
+        match = re.search(r"i\s*(?:said|mean|meant)\s+(\w+)[,.]?\s*not\s+(\w+)", text_lower)
+        if match:
+            right, wrong = match.group(1), match.group(2)
+            self.enhanced_voice.learn_correction(wrong, right.capitalize())
+            print(f"   [Auto-learned] Will replace '{wrong}' with '{right.capitalize()}' in future")
+            return
+        
+        # Pattern: "it's Y not X" or "its Y not X"
+        match = re.search(r"it'?s\s+(\w+)[,.]?\s*not\s+(\w+)", text_lower)
+        if match:
+            right, wrong = match.group(1), match.group(2)
+            self.enhanced_voice.learn_correction(wrong, right.capitalize())
+            print(f"   [Auto-learned] Will replace '{wrong}' with '{right.capitalize()}' in future")
+            return
+        
+        # Pattern: spelling out "A B D U S" -> learn "abdus"
+        match = re.search(r"([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s*([a-z])?", text_lower)
+        if match:
+            letters = [g for g in match.groups() if g]
+            if len(letters) >= 4:
+                spelled_word = "".join(letters).capitalize()
+                # Look for what they might be correcting (word before the spelling)
+                pre_match = re.search(r"(\w+)\s+[a-z]\s+[a-z]\s+[a-z]", text_lower)
+                if pre_match:
+                    wrong_word = pre_match.group(1)
+                    if wrong_word not in ['is', 'its', 'the', 'not', 'and', 'mean', 'said']:
+                        self.enhanced_voice.learn_correction(wrong_word, spelled_word)
+                        self.enhanced_voice.add_known_name(spelled_word)
+                        print(f"   [Auto-learned] Will replace '{wrong_word}' with '{spelled_word}' in future")
+        
+        # Also extract any capitalized names from the text for context
+        self._extract_names_from_text(text)
+    
+    def _extract_names_from_text(self, text: str):
+        """Extract potential names from text and add to known names."""
+        if not self.enhanced_voice:
+            return
+        
+        import re
+        # Find capitalized words that might be names
+        # Patterns: "to Abdul", "from Abdul", "tell Abdul", "message Abdul"
+        name_patterns = [
+            r"(?:to|from|tell|message|call|text|contact|ask)\s+([A-Z][a-z]+)",
+            r"(?:said|says|told|asked)\s+([A-Z][a-z]+)",
+            r"([A-Z][a-z]+)\s+(?:said|says|told|asked)",
+        ]
+        
+        for pattern in name_patterns:
+            matches = re.findall(pattern, text)
+            for name in matches:
+                if len(name) > 2 and name.lower() not in ['the', 'and', 'but', 'yes', 'not']:
+                    self.enhanced_voice.add_known_name(name)
 
     def _process_text_command(self, text: str):
         """Process a text command."""
         print(f"\nYou typed: {text}")
+        self._process_command(text)
         self._process_command(text)
 
     def _process_command(self, text: str):

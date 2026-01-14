@@ -26,6 +26,7 @@ class VLLMLlm:
     MODEL_CONTEXT_LIMITS = {
         "Qwen/Qwen2.5-7B-Instruct": 4096,
         "Qwen/Qwen3-32B-AWQ": 8192,
+        "QuantTrio/Qwen3-VL-32B-Instruct-AWQ": 8192,
         "Qwen/Qwen3-14B-AWQ": 8192,
         "Qwen/Qwen3-8B": 8192,
         "default": 8192,
@@ -39,7 +40,7 @@ class VLLMLlm:
         self,
         base_url: str = None,
         model: str = None,
-        timeout: float = 120.0,
+        timeout: float = 300.0,  # 5 minutes - VL model is slow on Kaggle T4s
         max_context: int = None,
         mode: str = "thinking",  # "thinking" or "fast"
     ):

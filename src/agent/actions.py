@@ -558,6 +558,22 @@ class Router:
                 return self.executors["ocr"].read_screen_text(
                     region=a.get("region")
                 )
+            # Vision-Language (VL) - AI that can see and understand
+            if t == "vl_vision.analyze_screen":
+                return self.executors["vl_vision"].analyze_screen(
+                    question=a.get("question")
+                )
+            if t == "vl_vision.find_on_screen":
+                return self.executors["vl_vision"].find_on_screen(
+                    target=a["target"]
+                )
+            if t == "vl_vision.list_files":
+                return self.executors["vl_vision"].list_files_on_screen()
+            if t == "vl_vision.analyze_image":
+                return self.executors["vl_vision"].analyze_image(
+                    image_path=a["image_path"],
+                    question=a.get("question")
+                )
             if t == "ocr.wait_for_text":
                 return self.executors["ocr"].wait_for_text(
                     text=a["text"],

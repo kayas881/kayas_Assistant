@@ -83,7 +83,7 @@ def vllm_api_url() -> str:
 
 def vllm_model() -> str:
     """Get vLLM model name."""
-    return env_str("VLLM_MODEL", str(profile_get("models.vllm.model", "Qwen/Qwen3-32B-AWQ")))
+    return env_str("VLLM_MODEL", str(profile_get("models.vllm.model", "QuantTrio/Qwen3-VL-32B-Instruct-AWQ")))
 
 
 def vllm_mode() -> str:

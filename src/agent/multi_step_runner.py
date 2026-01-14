@@ -66,7 +66,7 @@ class ExecutionContext:
 class MultiStepRunner:
     """Executes multi-step tasks with continuation logic."""
     
-    def __init__(self, llm, router, memory=None):
+    def __init__(self, llm, router, memory=None, vl_vision=None):
         """
         Initialize the multi-step runner.
         
@@ -74,10 +74,13 @@ class MultiStepRunner:
             llm: Language model for planning and continuation
             router: Action router for executing individual actions
             memory: Optional memory system for logging
+            vl_vision: Optional VL Vision executor for visual understanding
         """
         self.llm = llm
         self.router = router
         self.memory = memory
+        self.vl_vision = vl_vision  # VL Vision for seeing the screen
+        self._use_vision = vl_vision is not None
     
     def run_task(
         self,
@@ -275,7 +278,17 @@ class MultiStepRunner:
             "Should we continue or mark as complete?"
         )
         
-        # Create a continuation prompt
+        # Create a continuation prompt with visual awareness
+        has_vision = "📷 Visual state:" in state_info
+        vision_instruction = ""
+        if has_vision:
+            vision_instruction = """
+VISUAL CONTEXT: You can SEE what's on screen. Use the "📷 Visual state" section to:
+- Verify if the previous action worked (e.g., "I see the Downloads folder is open")
+- Find specific files or buttons mentioned by the user
+- Decide what to click or interact with next
+"""
+        
         prompt = f"""
 You are Kayas, an intelligent assistant executing a multi-step task.
 
@@ -287,14 +300,15 @@ Conversation context:
 Recent actions:
 {recent_steps}
 
-Deterministic context:
-{continuation_context}
+Current system state:
+{state_info}
+{vision_instruction}
 
 Execution trace (JSON):
 {step_summary}
 
-Current system state:
-{state_info}
+Deterministic context:
+{continuation_context}
 
 Analyze what has been done and decide:
 1. Is the goal complete/satisfied?
@@ -314,6 +328,7 @@ IMPORTANT:
 - Only return valid JSON
 - If completed, set next_steps to null
 - next_steps should be a list of actions or null (never an empty list)
+- If you see files/elements in the visual state, reference them specifically
 """
         
         print(f"\n[MultiStepRunner] Asking model if task is complete...")
@@ -592,6 +607,10 @@ IMPORTANT:
         return "\n".join(formatted)
 
     def _update_state_snapshot(self, context: ExecutionContext) -> None:
+        """Update state snapshot with process info and optional vision analysis."""
+        parts = []
+        
+        # 1. Process information
         process_summary = "Process information unavailable"
         try:
             state = self.router.route({"tool": "process.list_processes", "args": {}})
@@ -602,7 +621,9 @@ IMPORTANT:
                 process_summary = "Process information unavailable"
         except Exception as exc:
             process_summary = f"Process information unavailable ({exc})"
+        parts.append(process_summary)
 
+        # 2. Last action summary
         last_action_summary = "No actions have been executed yet."
         if context.executed_steps:
             last_step = context.executed_steps[-1]
@@ -613,8 +634,68 @@ IMPORTANT:
             last_action_summary = (
                 f"Last action step {last_step.step_number} via {tool} {status}: {detail}"
             )
+        parts.append(last_action_summary)
+        
+        # 3. VISION: See what's actually on screen (if available)
+        if self._use_vision and self.vl_vision:
+            try:
+                print("  [MultiStepRunner] Taking visual snapshot...")
+                # Ask the vision model what's on screen in relation to the goal
+                vision_question = f"Briefly describe what's visible on screen. Focus on: windows, dialogs, file names, or anything relevant to this task: {context.original_goal}"
+                vision_result = self.vl_vision.analyze_screen(question=vision_question)
+                
+                if vision_result.get("success"):
+                    screen_description = vision_result.get("analysis", "")[:500]
+                    parts.append(f"\n📷 Visual state: {screen_description}")
+                    print(f"  [Vision] {screen_description[:100]}...")
+                else:
+                    parts.append("\n📷 Visual state: Could not capture screen")
+            except Exception as e:
+                parts.append(f"\n📷 Visual state: Error ({e})")
+                print(f"  [Vision Error] {e}")
 
-        context.state_snapshot = f"{process_summary}\n{last_action_summary}"
+        context.state_snapshot = "\n".join(parts)
+
+    def find_on_screen(self, target: str) -> Optional[str]:
+        """
+        Use vision to find something on screen.
+        
+        Args:
+            target: What to find (e.g., "cat video", "send button")
+        
+        Returns:
+            Description of where the target is, or None if not found
+        """
+        if not self._use_vision or not self.vl_vision:
+            return None
+        
+        try:
+            result = self.vl_vision.find_on_screen(target)
+            if result.get("success") and result.get("found"):
+                return result.get("result")
+            return None
+        except Exception as e:
+            print(f"  [Vision Error] Could not find '{target}': {e}")
+            return None
+    
+    def list_visible_files(self) -> Optional[str]:
+        """
+        Use vision to list files visible on screen.
+        
+        Returns:
+            List of visible files, or None on error
+        """
+        if not self._use_vision or not self.vl_vision:
+            return None
+        
+        try:
+            result = self.vl_vision.list_files_on_screen()
+            if result.get("success"):
+                return result.get("files")
+            return None
+        except Exception as e:
+            print(f"  [Vision Error] Could not list files: {e}")
+            return None
 
     def _get_process_list(self) -> str:
         try:

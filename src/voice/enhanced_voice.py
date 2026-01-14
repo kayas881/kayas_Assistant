@@ -13,6 +13,7 @@ Features:
 import threading
 import queue
 import time
+import json
 from dataclasses import dataclass, field
 from typing import Optional, Callable, Dict, Any, List
 from pathlib import Path
@@ -62,8 +63,8 @@ class EnhancedVoiceConfig:
     tts_voice: str = "jenny"  # Edge voice shorthand or full ID
     tts_rate: str = "+5%"     # Speaking rate
     
-    # STT settings
-    stt_model: str = "small"  # Whisper model: tiny, base, small, medium
+    # STT settings - use 'medium' for better accent handling
+    stt_model: str = "medium"  # Whisper model: tiny, base, small, medium, large-v3
     sample_rate: int = 16000
     
     # Wake word settings
@@ -80,15 +81,53 @@ class EnhancedVoiceConfig:
         "k yas", "kayaz", "kyaz",
     ])
     
-    # Recording settings
+    # Smart Recording settings
     max_recording_seconds: float = 30.0
-    silence_threshold: float = 0.015
-    silence_duration: float = 1.5  # Seconds of silence to stop recording
     min_recording_seconds: float = 0.5
+    
+    # Silence detection (smarter)
+    silence_threshold: float = 0.012           # Lower = more sensitive
+    min_silence_for_pause: float = 0.5         # Brief pause - keep listening
+    min_silence_for_sentence: float = 1.5      # Sentence end - might be done
+    min_silence_for_done: float = 2.5          # Definitely done talking
+    
+    # Speech energy tracking
+    speech_energy_threshold: float = 0.02      # Clear speech
+    mumble_energy_threshold: float = 0.008     # Might be speech
     
     # Feedback sounds
     play_activation_sound: bool = True
     play_done_sound: bool = True
+    
+    # Post-transcription correction
+    enable_transcription_correction: bool = True
+    
+    # Confidence thresholds
+    min_confidence: float = 0.4           # Below this, reject as noise
+    low_confidence_threshold: float = 0.65 # Below this, ask for confirmation
+    ask_confirmation_on_low: bool = True  # Ask "Did you say X?" when uncertain
+    
+    # Common transcription errors and their corrections
+    # Format: {"misheard": "correct"}
+    transcription_corrections: Dict[str, str] = field(default_factory=lambda: {
+        # Wake word corrections
+        "guys": "Kayas",
+        "hey guys": "Hey Kayas",
+        "hi guys": "Hi Kayas",
+        "chaos": "Kayas",
+        "hey chaos": "Hey Kayas",
+        "kaya": "Kayas",
+        "hey kaya": "Hey Kayas",
+        "gaia": "Kayas",
+        "hey gaia": "Hey Kayas",
+        "kaius": "Kayas",
+        "casa": "Kayas",
+        "gaias": "Kayas",
+        "kaias": "Kayas",
+        
+        # Common name/word corrections for this user
+        # (can be expanded by learn_correction())
+    })
 
 
 class EnhancedVoiceAgent:
@@ -110,6 +149,15 @@ class EnhancedVoiceAgent:
         self._speaking = False
         self._wake_word_active = False
         
+        # Context - names and terms from conversation
+        self._known_names: set = set()  # Names mentioned in conversation
+        self._context_words: set = set()  # Important words from recent context
+        
+        # Paths for persistence
+        self._data_dir = Path.cwd() / ".agent"
+        self._corrections_file = self._data_dir / "voice_corrections.json"
+        self._names_file = self._data_dir / "known_names.json"
+        
         # Components
         self._tts: Optional[EdgeTTS] = None
         self._whisper: Optional[WhisperModel] = None
@@ -125,6 +173,10 @@ class EnhancedVoiceAgent:
         self._init_stt()
         if self.config.enable_wake_word:
             self._init_wake_word()
+        
+        # Load learned corrections and names
+        self._load_corrections()
+        self._load_known_names()
         
         print("[EnhancedVoice] Initialized")
     
@@ -190,6 +242,167 @@ class EnhancedVoiceAgent:
         except Exception as e:
             print(f"[EnhancedVoice] Wake word init failed: {e}")
     
+    # ==================== Transcription Correction ====================
+    
+    def correct_transcription(self, text: str) -> str:
+        """
+        Apply post-transcription corrections for common misheard words.
+        
+        This fixes words that Whisper consistently gets wrong for this user,
+        especially names and specialized terms.
+        
+        Args:
+            text: Raw transcribed text
+        
+        Returns:
+            Corrected text
+        """
+        if not self.config.enable_transcription_correction or not text:
+            return text
+        
+        corrected = text
+        
+        # Apply word/phrase replacements (case-insensitive matching)
+        import re
+        for wrong, right in self.config.transcription_corrections.items():
+            # Use word boundaries to avoid partial replacements
+            pattern = re.compile(re.escape(wrong), re.IGNORECASE)
+            corrected = pattern.sub(right, corrected)
+        
+        if corrected != text:
+            print(f"   [Correction] '{text}' → '{corrected}'")
+        
+        # Also apply context-aware name corrections
+        corrected = self._apply_name_corrections(corrected)
+        
+        return corrected
+    
+    def learn_correction(self, wrong: str, right: str, persist: bool = True) -> None:
+        """
+        Add a new transcription correction and optionally save to disk.
+        
+        Args:
+            wrong: The misheard word/phrase
+            right: The correct word/phrase
+            persist: Save to disk for future sessions
+        """
+        self.config.transcription_corrections[wrong.lower()] = right
+        print(f"   [Learned] '{wrong}' → '{right}'")
+        
+        if persist:
+            self._save_corrections()
+    
+    def _load_corrections(self) -> None:
+        """Load learned corrections from disk."""
+        try:
+            if self._corrections_file.exists():
+                with open(self._corrections_file, 'r') as f:
+                    saved = json.load(f)
+                # Merge with defaults (saved corrections take priority)
+                self.config.transcription_corrections.update(saved)
+                print(f"[EnhancedVoice] Loaded {len(saved)} learned corrections")
+        except Exception as e:
+            print(f"[EnhancedVoice] Could not load corrections: {e}")
+    
+    def _save_corrections(self) -> None:
+        """Save learned corrections to disk."""
+        try:
+            self._data_dir.mkdir(exist_ok=True)
+            with open(self._corrections_file, 'w') as f:
+                json.dump(self.config.transcription_corrections, f, indent=2)
+        except Exception as e:
+            print(f"[EnhancedVoice] Could not save corrections: {e}")
+    
+    def get_learned_corrections(self) -> Dict[str, str]:
+        """Get all current transcription corrections."""
+        return dict(self.config.transcription_corrections)
+    
+    # ==================== Context-Aware Names ====================
+    
+    def _load_known_names(self) -> None:
+        """Load known names from disk."""
+        try:
+            if self._names_file.exists():
+                with open(self._names_file, 'r') as f:
+                    names = json.load(f)
+                self._known_names = set(names)
+                print(f"[EnhancedVoice] Loaded {len(names)} known names")
+        except Exception as e:
+            print(f"[EnhancedVoice] Could not load names: {e}")
+    
+    def _save_known_names(self) -> None:
+        """Save known names to disk."""
+        try:
+            self._data_dir.mkdir(exist_ok=True)
+            with open(self._names_file, 'w') as f:
+                json.dump(list(self._known_names), f, indent=2)
+        except Exception as e:
+            print(f"[EnhancedVoice] Could not save names: {e}")
+    
+    def add_known_name(self, name: str) -> None:
+        """Add a name to the known names list."""
+        name = name.strip().capitalize()
+        if name and len(name) > 1:
+            self._known_names.add(name)
+            self._save_known_names()
+            print(f"   [Name learned] '{name}'")
+    
+    def _find_similar_name(self, word: str) -> Optional[str]:
+        """
+        Find a known name that sounds similar to the given word.
+        
+        Uses phonetic similarity to match mishearings like Abdul->Abdus.
+        """
+        if not self._known_names:
+            return None
+        
+        word_lower = word.lower()
+        
+        # Exact match
+        for name in self._known_names:
+            if name.lower() == word_lower:
+                return name
+        
+        # Similar-sounding match (e.g., Abdul vs Abdus)
+        import difflib
+        best_match = None
+        best_ratio = 0.7  # Minimum 70% similarity
+        
+        for name in self._known_names:
+            ratio = difflib.SequenceMatcher(None, word_lower, name.lower()).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_match = name
+        
+        return best_match
+    
+    def _apply_name_corrections(self, text: str) -> str:
+        """
+        Replace words in text with known names if they sound similar.
+        """
+        if not self._known_names:
+            return text
+        
+        words = text.split()
+        corrected_words = []
+        made_correction = False
+        
+        for word in words:
+            # Check if this word should be a known name
+            similar_name = self._find_similar_name(word)
+            if similar_name and similar_name.lower() != word.lower():
+                corrected_words.append(similar_name)
+                made_correction = True
+            else:
+                corrected_words.append(word)
+        
+        if made_correction:
+            corrected = " ".join(corrected_words)
+            print(f"   [Name correction] '{text}' → '{corrected}'")
+            return corrected
+        
+        return text
+    
     # ==================== TTS ====================
     
     def speak(self, text: str, blocking: bool = True) -> bool:
@@ -233,15 +446,84 @@ class EnhancedVoiceAgent:
     
     # ==================== STT ====================
     
-    def listen(self, timeout: float = None) -> Optional[str]:
+    def _is_sentence_complete(self, text: str) -> bool:
         """
-        Listen for speech and transcribe.
+        Check if transcribed text appears to be a complete thought.
+        
+        Returns True if:
+        - Ends with punctuation (. ! ?)
+        - Is a complete short command
+        - Doesn't end with incomplete indicators
+        
+        Returns False if:
+        - Ends mid-phrase (and, but, or, to, the, etc.)
+        - Ends with trailing words suggesting more coming
+        """
+        if not text:
+            return False
+        
+        text = text.strip().lower()
+        
+        # Ends with sentence-ending punctuation = complete
+        if text[-1] in '.!?':
+            return True
+        
+        # Common complete short commands (even without punctuation)
+        complete_patterns = [
+            'stop', 'cancel', 'quit', 'exit', 'yes', 'no', 'okay', 'ok',
+            'thanks', 'thank you', 'never mind', 'nevermind',
+            'what time is it', 'play music', 'pause', 'resume',
+        ]
+        for pattern in complete_patterns:
+            if text == pattern or text.endswith(pattern):
+                return True
+        
+        # Incomplete indicators - likely more coming
+        incomplete_endings = [
+            ' and', ' but', ' or', ' so', ' because', ' then',
+            ' the', ' a', ' an', ' to', ' for', ' with', ' in', ' on',
+            ' is', ' are', ' was', ' were', ' will', ' would', ' should',
+            ' can', ' could', ' if', ' when', ' while', ' that', ' which',
+            ' i', ' you', ' we', ' they', ' it', ' my', ' your', ' our',
+        ]
+        for ending in incomplete_endings:
+            if text.endswith(ending):
+                return False
+        
+        # If it's reasonably long and doesn't end with incomplete words, probably done
+        word_count = len(text.split())
+        if word_count >= 3:
+            return True
+        
+        # Very short without punctuation - might be incomplete
+        return False
+    
+    def listen(self, timeout: float = None, allow_continuation: bool = True) -> Optional[str]:
+        """
+        Listen for speech and transcribe with smart completeness detection.
         
         Args:
             timeout: Max seconds to listen (default from config)
+            allow_continuation: If True, continue listening if sentence incomplete
         
         Returns:
             Transcribed text or None
+        """
+        result = self.listen_with_confidence(timeout, allow_continuation)
+        if result:
+            return result[0]
+        return None
+    
+    def listen_with_confidence(self, timeout: float = None, allow_continuation: bool = True) -> Optional[tuple]:
+        """
+        Listen for speech and return transcription with confidence score.
+        
+        Args:
+            timeout: Max seconds to listen (default from config)
+            allow_continuation: If True, continue listening if sentence incomplete
+        
+        Returns:
+            Tuple of (text, confidence) or None
         """
         if not AUDIO_AVAILABLE:
             print("[EnhancedVoice] Audio not available")
@@ -252,54 +534,149 @@ class EnhancedVoiceAgent:
             return None
         
         timeout = timeout or self.config.max_recording_seconds
+        max_continuations = 2  # Max times to continue listening
+        
+        all_audio = []
+        continuation_count = 0
         
         try:
-            print("🎤 Listening...")
+            while continuation_count <= max_continuations:
+                if continuation_count == 0:
+                    print("🎤 Listening...")
+                else:
+                    print("🎤 Continue speaking...")
+                
+                # Record with voice activity detection
+                audio_data = self._record_with_vad(timeout)
+                
+                if audio_data is None or len(audio_data) < self.config.sample_rate * self.config.min_recording_seconds:
+                    if all_audio:
+                        # Had some audio before, use what we have
+                        break
+                    print("[EnhancedVoice] No speech detected")
+                    return None
+                
+                all_audio.append(audio_data)
+                
+                # Transcribe current audio
+                print("📝 Transcribing...")
+                combined_audio = np.concatenate(all_audio)
+                segments_list = list(self._whisper.transcribe(
+                    combined_audio,
+                    language="en",
+                    beam_size=1,
+                    vad_filter=True
+                )[0])  # Get segments from tuple
+                
+                # Extract text and confidence
+                text_parts = []
+                confidences = []
+                for seg in segments_list:
+                    text_parts.append(seg.text)
+                    # avg_logprob is log probability, convert to probability
+                    prob = 2 ** seg.avg_logprob if hasattr(seg, 'avg_logprob') else 1.0
+                    confidences.append(min(prob, 1.0))  # Cap at 1.0
+                
+                text = " ".join(text_parts).strip()
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 1.0
+                
+                if not text:
+                    if continuation_count > 0:
+                        break  # Had audio before, this continuation was empty
+                    return None
+                
+                # Confidence feedback
+                if avg_confidence < self.config.min_confidence:
+                    print(f"   [Low confidence: {avg_confidence:.0%}] Probably noise, ignoring...")
+                    if continuation_count > 0:
+                        break
+                    return None
+                elif avg_confidence < self.config.low_confidence_threshold:
+                    print(f"💬 Heard (uncertain, {avg_confidence:.0%}): {text}")
+                else:
+                    print(f"💬 Heard ({avg_confidence:.0%}): {text}")
+                
+                # Check if sentence is complete
+                if not allow_continuation or self._is_sentence_complete(text):
+                    # Apply transcription correction before returning
+                    corrected = self.correct_transcription(text)
+                    print(f"✅ Complete: {corrected}")
+                    return (corrected, avg_confidence)
+                
+                # Sentence seems incomplete, try continuing
+                print("   [Sentence incomplete, waiting for more...]")
+                continuation_count += 1
+                time.sleep(0.3)  # Brief pause before continuing
             
-            # Record with voice activity detection
-            audio_data = self._record_with_vad(timeout)
+            # Max continuations reached, return what we have
+            if all_audio:
+                combined_audio = np.concatenate(all_audio)
+                segments_list = list(self._whisper.transcribe(
+                    combined_audio,
+                    language="en",
+                    beam_size=1,
+                    vad_filter=True
+                )[0])
+                
+                # Recalculate confidence for final transcription
+                text_parts = []
+                confidences = []
+                for seg in segments_list:
+                    text_parts.append(seg.text)
+                    prob = 2 ** seg.avg_logprob if hasattr(seg, 'avg_logprob') else 1.0
+                    confidences.append(min(prob, 1.0))
+                
+                text = " ".join(text_parts).strip()
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 1.0
+                
+                if text:
+                    # Apply transcription correction before returning
+                    corrected = self.correct_transcription(text)
+                    print(f"✅ Final (max continuations): {corrected}")
+                    return (corrected, avg_confidence)
             
-            if audio_data is None or len(audio_data) < self.config.sample_rate * self.config.min_recording_seconds:
-                print("[EnhancedVoice] No speech detected")
-                return None
-            
-            # Transcribe
-            print("📝 Transcribing...")
-            segments, info = self._whisper.transcribe(
-                audio_data,
-                language="en",
-                beam_size=1,
-                vad_filter=True
-            )
-            
-            text = " ".join(seg.text for seg in segments).strip()
-            
-            if text:
-                print(f"💬 You said: {text}")
-                return text
-            else:
-                return None
+            return None
                 
         except Exception as e:
             print(f"[EnhancedVoice] Listen error: {e}")
             return None
     
     def _record_with_vad(self, timeout: float) -> Optional[np.ndarray]:
-        """Record audio with voice activity detection."""
+        """
+        Record audio with SMART voice activity detection.
+        
+        Improvements over basic VAD:
+        - Tracks speech energy to distinguish clear speech from silence
+        - Uses tiered silence detection (pause vs sentence-end vs done)
+        - Longer tolerance for natural pauses mid-sentence
+        - Requires more silence after energetic speech
+        """
         sample_rate = self.config.sample_rate
         chunk_duration = 0.1  # 100ms chunks
         chunk_samples = int(sample_rate * chunk_duration)
         
+        # Tiered silence thresholds
         silence_threshold = self.config.silence_threshold
-        max_silence_chunks = int(self.config.silence_duration / chunk_duration)
+        speech_threshold = self.config.speech_energy_threshold
+        mumble_threshold = self.config.mumble_energy_threshold
+        
+        # Convert silence durations to chunk counts
+        pause_chunks = int(self.config.min_silence_for_pause / chunk_duration)
+        sentence_chunks = int(self.config.min_silence_for_sentence / chunk_duration)
+        done_chunks = int(self.config.min_silence_for_done / chunk_duration)
+        min_speech_chunks = int(self.config.min_recording_seconds / chunk_duration)
         
         audio_chunks = []
         silence_count = 0
         speech_started = False
+        speech_chunk_count = 0
+        peak_energy = 0.0
+        recent_energies = []
         start_time = time.time()
         
         def audio_callback(indata, frames, time_info, status):
-            nonlocal speech_started, silence_count
+            nonlocal speech_started, silence_count, speech_chunk_count
+            nonlocal peak_energy, recent_energies
             
             if status:
                 return
@@ -307,16 +684,50 @@ class EnhancedVoiceAgent:
             chunk = indata[:, 0].copy()
             rms = np.sqrt(np.mean(chunk**2))
             
-            if rms > silence_threshold:
+            # Track energy history (last 10 chunks = 1 second)
+            recent_energies.append(rms)
+            if len(recent_energies) > 10:
+                recent_energies.pop(0)
+            
+            # Update peak energy
+            if rms > peak_energy:
+                peak_energy = rms
+            
+            # Determine if this is speech
+            is_clear_speech = rms > speech_threshold
+            is_possible_speech = rms > mumble_threshold
+            is_silence = rms < silence_threshold
+            
+            if is_clear_speech or (is_possible_speech and speech_started):
                 speech_started = True
                 silence_count = 0
+                speech_chunk_count += 1
                 audio_chunks.append(chunk)
+                
             elif speech_started:
-                audio_chunks.append(chunk)
+                # We're in a potential pause
+                audio_chunks.append(chunk)  # Keep recording during pauses
                 silence_count += 1
                 
-                if silence_count >= max_silence_chunks:
-                    raise sd.CallbackAbort()
+                # Determine how much silence is enough to stop
+                # More energetic speech = need more silence to confirm done
+                avg_recent_energy = sum(recent_energies) / len(recent_energies) if recent_energies else 0
+                was_energetic = peak_energy > speech_threshold * 2
+                has_enough_speech = speech_chunk_count >= min_speech_chunks
+                
+                # Decision logic:
+                # - If we haven't recorded enough, keep going
+                # - If speech was energetic, wait for "done" silence
+                # - If speech was quiet, sentence-level silence is enough
+                if has_enough_speech:
+                    if was_energetic:
+                        # They were speaking clearly - wait for longer silence
+                        if silence_count >= done_chunks:
+                            raise sd.CallbackAbort()
+                    else:
+                        # Quieter speech - sentence-level silence is fine
+                        if silence_count >= sentence_chunks:
+                            raise sd.CallbackAbort()
         
         try:
             with sd.InputStream(
@@ -328,14 +739,27 @@ class EnhancedVoiceAgent:
             ):
                 # Wait for recording to complete or timeout
                 while time.time() - start_time < timeout:
-                    if len(audio_chunks) > 0 and silence_count >= max_silence_chunks:
-                        break
+                    # Check if we should stop
+                    has_enough = speech_chunk_count >= min_speech_chunks
+                    was_energetic = peak_energy > speech_threshold * 2
+                    
+                    if has_enough:
+                        if was_energetic and silence_count >= done_chunks:
+                            break
+                        elif not was_energetic and silence_count >= sentence_chunks:
+                            break
+                    
                     time.sleep(0.05)
+                    
         except sd.CallbackAbort:
             pass  # Normal termination
         
         if not audio_chunks:
             return None
+        
+        # Debug info
+        duration = len(audio_chunks) * chunk_duration
+        print(f"   [VAD] Recorded {duration:.1f}s, peak energy: {peak_energy:.4f}")
         
         return np.concatenate(audio_chunks)
     

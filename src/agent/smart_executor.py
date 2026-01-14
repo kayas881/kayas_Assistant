@@ -472,6 +472,64 @@ TOOL_DEFINITIONS = [
         }
     },
     
+    # Vision-Language tools (AI that can SEE)
+    {
+        "type": "function",
+        "function": {
+            "name": "vision_analyze_screen",
+            "description": "Take a screenshot and use AI vision to understand what's on screen. Much smarter than OCR - can understand context, find elements, describe the UI. Use when you need to SEE what the user is looking at.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Specific question about what's on screen (optional). E.g., 'Is there a file explorer open?', 'What app is in focus?'"
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vision_find_on_screen",
+            "description": "Use AI vision to find a specific element, file, button, or text on the current screen. Returns location and details.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "What to find on screen. E.g., 'cat video', 'Chrome icon', 'submit button', 'Downloads folder'"
+                    }
+                },
+                "required": ["target"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vision_list_files",
+            "description": "Use AI vision to list all visible files and folders on the current screen. Useful for file explorer views.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vision_analyze_image",
+            "description": "Use AI vision to analyze/describe an image file. Can answer questions about images.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_path": {"type": "string", "description": "Path to the image file"},
+                    "question": {"type": "string", "description": "Question about the image (optional)"}
+                },
+                "required": ["image_path"]
+            }
+        }
+    },
+    
     # File delete/archive
     {
         "type": "function",
@@ -705,7 +763,14 @@ class SmartExecutor:
 - Remember past context when making decisions
 - Give your honest opinion when asked for advice
 - Be helpful but also be a friend who cares
-- If messaging someone, check relationship context and warn about late-night or emotional messages"""
+- If messaging someone, check relationship context and warn about late-night or emotional messages
+
+## Vision Tools - USE THESE FOR VISUAL TASKS:
+- When user refers to something visible but ambiguous (like "that file", "the cat video", "that error"), use vision_find_on_screen to locate it
+- Use vision_analyze_screen to understand what's currently displayed on screen before acting
+- Use vision_list_files when user wants to find a file visible in Explorer/folder view
+- If user says "what's on my screen" or "what do you see", use vision_analyze_screen
+- ALWAYS use vision before guessing about visible content - you can SEE the screen!"""
         
         return prompt
     
@@ -873,6 +938,11 @@ class SmartExecutor:
             "vision_describe": ("vision.describe", {"image_path": args.get("image_path", "")}),
             "ocr_read_screen": ("ocr.read_screen", {}),
             "ocr_read_image": ("ocr.read_file", {"image_path": args.get("image_path")}),
+            # Vision-Language (AI that can see)
+            "vision_analyze_screen": ("vl_vision.analyze_screen", {"question": args.get("question")}),
+            "vision_find_on_screen": ("vl_vision.find_on_screen", {"target": args.get("target")}),
+            "vision_list_files": ("vl_vision.list_files", {}),
+            "vision_analyze_image": ("vl_vision.analyze_image", {"image_path": args.get("image_path"), "question": args.get("question")}),
         }
         
         if func_name not in tool_mapping:
@@ -1080,6 +1150,11 @@ class SmartExecutor:
             "vision_describe": lambda: result.get("description", "Here's what I see in the image."),
             "ocr_read_screen": lambda: f"I read the screen. Here's the text:\n\n{result.get('text', 'No text found')[:500]}",
             "ocr_read_image": lambda: f"I read the image. Here's the text:\n\n{result.get('text', 'No text found')[:500]}",
+            # Vision-Language (AI seeing)
+            "vision_analyze_screen": lambda: f"Here's what I see on your screen:\n\n{result.get('analysis', 'Could not analyze screen.')}",
+            "vision_find_on_screen": lambda: result.get('result', 'Could not find that on screen.'),
+            "vision_list_files": lambda: f"Files I can see:\n\n{result.get('files', 'No files visible.')}",
+            "vision_analyze_image": lambda: f"Here's what I see in the image:\n\n{result.get('analysis', 'Could not analyze image.')}",
         }
         
         generator = responses.get(func_name)
