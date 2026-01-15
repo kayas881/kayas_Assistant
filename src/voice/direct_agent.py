@@ -50,6 +50,7 @@ from ..executors.ocr_exec import OCRExecutor, OCRConfig
 from ..executors.cv_exec import CVExecutor, CVConfig
 from ..executors.perception_engine import PerceptionEngine, PerceptionConfig
 from ..executors.vl_vision_exec import VLVisionExecutor, VLVisionConfig
+from ..executors.youtube_exec import YouTubeExecutor, YouTubeConfig
 from ..memory.sqlite_memory import MemoryConfig, SQLiteMemory
 from ..memory.vector_memory import VectorMemory, VectorMemoryConfig
 from ..agent.multi_step_runner import MultiStepRunner
@@ -242,6 +243,14 @@ class DirectAgent:
             print(f"[DirectAgent] VL Vision not available: {e}")
             self.vl_vision_exec = None
         
+        # YouTube Browser Automation
+        try:
+            self.youtube_exec = YouTubeExecutor(YouTubeConfig())
+            print("[DirectAgent] YouTube executor initialized")
+        except Exception as e:
+            print(f"[DirectAgent] YouTube not available: {e}")
+            self.youtube_exec = None
+        
         # Initialize router
         self.router = Router({
             "fs": self.fs,
@@ -273,6 +282,7 @@ class DirectAgent:
             "whatsapp": self.whatsapp_exec,
             "explorer": self.explorer_exec,
             "vl_vision": self.vl_vision_exec,
+            "youtube": self.youtube_exec,
         })
         
         # Initialize ReAct agent (for multi-step reasoning)

@@ -330,6 +330,109 @@ TOOL_DEFINITIONS = [
         }
     },
     
+    # YouTube Browser Automation tools
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_search",
+            "description": "Search for videos on YouTube. Can optionally play the first result automatically.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query (e.g., 'Python tutorials', 'MKBHD latest')"},
+                    "play_first": {"type": "boolean", "description": "If true, automatically play the first search result", "default": False}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_play",
+            "description": "Play a specific YouTube video by URL or search for it by title.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Direct YouTube video URL"},
+                    "title": {"type": "string", "description": "Video title to search for and play"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_check_channel",
+            "description": "Check a YouTube channel for their latest videos. Can also play their most recent upload.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_name": {"type": "string", "description": "Name of the channel (e.g., 'MKBHD', 'Fireship', 'Ken')"},
+                    "play_latest": {"type": "boolean", "description": "If true, play the channel's most recent video", "default": False}
+                },
+                "required": ["channel_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_subscriptions",
+            "description": "Check your YouTube subscriptions feed for new videos from channels you follow. Requires being logged in.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum number of videos to return", "default": 10}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_play_from_subscriptions",
+            "description": "Play a video from your subscriptions. Can filter by channel name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_filter": {"type": "string", "description": "Only play from this specific channel"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_recommendations",
+            "description": "Get YouTube's recommended videos (For You / Homepage).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum number of videos to return", "default": 10}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_control",
+            "description": "Control YouTube video playback (play, pause, fullscreen, mute, next, previous).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["play", "pause", "fullscreen", "mute", "unmute", "next", "previous"],
+                        "description": "Playback control action"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    
     # Screenshot/Desktop tools
     {
         "type": "function",
@@ -923,6 +1026,14 @@ class SmartExecutor:
             "calendar_create_event": ("calendar.create_event", args),
             "spotify_play": ("spotify.play_query", {"query": args.get("query")}),
             "spotify_pause": ("spotify.pause", {}),
+            # YouTube Browser Automation
+            "youtube_search": ("youtube.search", {"query": args.get("query"), "play_first": args.get("play_first", False)}),
+            "youtube_play": ("youtube.play", {"url": args.get("url"), "title": args.get("title")}),
+            "youtube_check_channel": ("youtube.check_channel", {"channel_name": args.get("channel_name"), "play_latest": args.get("play_latest", False)}),
+            "youtube_subscriptions": ("youtube.subscriptions", {"limit": args.get("limit", 10)}),
+            "youtube_play_from_subscriptions": ("youtube.play_from_subscriptions", {"channel_filter": args.get("channel_filter")}),
+            "youtube_recommendations": ("youtube.recommendations", {"limit": args.get("limit", 10)}),
+            "youtube_control": ("youtube.control", {"action": args.get("action")}),
             "desktop_screenshot": ("desktop.screenshot", {"filename": args.get("filename", "screenshot.png")}),
             "email_send": ("email.send", {"to": args.get("to"), "subject": args.get("subject"), "body": args.get("body")}),
             # Explorer tools
@@ -1155,6 +1266,14 @@ class SmartExecutor:
             "vision_find_on_screen": lambda: result.get('result', 'Could not find that on screen.'),
             "vision_list_files": lambda: f"Files I can see:\n\n{result.get('files', 'No files visible.')}",
             "vision_analyze_image": lambda: f"Here's what I see in the image:\n\n{result.get('analysis', 'Could not analyze image.')}",
+            # YouTube Browser Automation
+            "youtube_search": lambda: self._format_youtube_search(result, args),
+            "youtube_play": lambda: f"Now playing: {result.get('title', 'video')}",
+            "youtube_check_channel": lambda: self._format_youtube_channel(result, args),
+            "youtube_subscriptions": lambda: self._format_youtube_subscriptions(result),
+            "youtube_play_from_subscriptions": lambda: f"Playing from your subscriptions: {result.get('title', 'video')}",
+            "youtube_recommendations": lambda: self._format_youtube_recommendations(result),
+            "youtube_control": lambda: f"YouTube: {args.get('action', 'done')}!",
         }
         
         generator = responses.get(func_name)
@@ -1204,6 +1323,84 @@ class SmartExecutor:
         
         return formatted
     
+    def _format_youtube_search(self, result: Dict, args: Dict) -> str:
+        """Format YouTube search results."""
+        if result.get("action") == "playing":
+            return f"Now playing: {result.get('title', 'video')}"
+        
+        # If we have a message from the executor, use it
+        if result.get("message"):
+            return result.get("message")
+        
+        results = result.get("results", [])
+        query = args.get('query', 'your search')
+        
+        if not results:
+            # Browser is open with results, just user can't see extraction
+            return f"Searched YouTube for '{query}' - the results are showing in your browser. Pick the one you want!"
+        
+        formatted = f"Found {len(results)} videos for '{query}':\n\n"
+        for i, v in enumerate(results[:5], 1):
+            title = v.get("title", "Unknown")[:50]
+            channel = v.get("channel", "")
+            duration = v.get("duration", "")
+            if channel:
+                formatted += f"{i}. **{title}** - {channel}"
+            else:
+                formatted += f"{i}. **{title}**"
+            if duration:
+                formatted += f" ({duration})"
+            formatted += "\n"
+        
+        return formatted
+    
+    def _format_youtube_channel(self, result: Dict, args: Dict) -> str:
+        """Format channel check results."""
+        channel = args.get("channel_name", "the channel")
+        
+        if result.get("action") == "playing":
+            now_playing = result.get("now_playing", {})
+            return f"Playing latest from {channel}: {now_playing.get('title', 'video')}"
+        
+        videos = result.get("latest_videos", [])
+        if not videos:
+            return f"Couldn't find any recent videos from {channel}."
+        
+        formatted = f"Latest videos from {channel}:\n\n"
+        for i, v in enumerate(videos[:5], 1):
+            title = v.get("title", "Unknown")[:50]
+            formatted += f"{i}. {title}\n"
+        
+        return formatted
+    
+    def _format_youtube_subscriptions(self, result: Dict) -> str:
+        """Format subscriptions feed."""
+        videos = result.get("videos", [])
+        if not videos:
+            return "No new videos from your subscriptions. You might need to log in to YouTube first."
+        
+        formatted = "New from your subscriptions:\n\n"
+        for i, v in enumerate(videos[:8], 1):
+            title = v.get("title", "Unknown")[:40]
+            channel = v.get("channel", "Unknown")
+            formatted += f"{i}. **{title}** - {channel}\n"
+        
+        return formatted
+    
+    def _format_youtube_recommendations(self, result: Dict) -> str:
+        """Format YouTube recommendations."""
+        videos = result.get("videos", [])
+        if not videos:
+            return "Couldn't fetch recommendations."
+        
+        formatted = "YouTube recommends for you:\n\n"
+        for i, v in enumerate(videos[:8], 1):
+            title = v.get("title", "Unknown")[:40]
+            channel = v.get("channel", "Unknown")
+            formatted += f"{i}. **{title}** - {channel}\n"
+        
+        return formatted
+
     def _handle_error(self, error: str, request: str, func_name: str = None, args: Dict = None) -> ExecutionResult:
         """
         Handle errors with LLM-suggested recovery.

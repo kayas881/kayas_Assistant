@@ -595,6 +595,42 @@ class Router:
                     region=a["region"],
                     language=a.get("language", "eng")
                 )
+            # YouTube Browser Automation
+            if t == "youtube.open":
+                return self.executors["youtube"].open_youtube()
+            if t == "youtube.search":
+                return self.executors["youtube"].search(
+                    query=a["query"],
+                    play_first=a.get("play_first", False)
+                )
+            if t == "youtube.play":
+                return self.executors["youtube"].play_video(
+                    url=a.get("url"),
+                    title=a.get("title")
+                )
+            if t == "youtube.check_channel":
+                return self.executors["youtube"].check_channel(
+                    channel_name=a["channel_name"],
+                    play_latest=a.get("play_latest", False)
+                )
+            if t == "youtube.subscriptions":
+                return self.executors["youtube"].check_subscriptions(
+                    limit=a.get("limit", 10)
+                )
+            if t == "youtube.recommendations":
+                return self.executors["youtube"].get_recommendations(
+                    limit=a.get("limit", 10)
+                )
+            if t == "youtube.play_from_subscriptions":
+                return self.executors["youtube"].play_from_subscriptions(
+                    channel_filter=a.get("channel_filter")
+                )
+            if t == "youtube.control":
+                return self.executors["youtube"].control_playback(
+                    action=a["action"]
+                )
+            if t == "youtube.like":
+                return self.executors["youtube"].like_video()
             # Phase 1: Perception Engine (smart tools)
             if t == "perception.smart_click":
                 return self.executors["perception"].smart_click(

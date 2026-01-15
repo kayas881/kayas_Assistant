@@ -432,7 +432,15 @@ class ChatAgent:
         """Process a text command."""
         print(f"\nYou typed: {text}")
         self._process_command(text)
-        self._process_command(text)
+
+    def _show_thinking_indicator(self, stop_event):
+        """Show a thinking animation while waiting for response."""
+        import itertools
+        spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
+        while not stop_event.is_set():
+            print(f"\r{next(spinner)} Thinking...", end='', flush=True)
+            time.sleep(0.1)
+        print("\r" + " " * 20 + "\r", end='', flush=True)  # Clear the line
 
     def _process_command(self, text: str):
         """Process a command (voice or text)."""
@@ -443,8 +451,20 @@ class ChatAgent:
             # Set speaking flag to avoid voice feedback loops
             self._speaking = True
             
-            # Process with conversation manager
-            response = self.conversation.process_user_input(text)
+            # Start thinking indicator in background
+            import threading
+            stop_thinking = threading.Event()
+            thinking_thread = threading.Thread(target=self._show_thinking_indicator, args=(stop_thinking,))
+            thinking_thread.daemon = True
+            thinking_thread.start()
+            
+            try:
+                # Process with conversation manager
+                response = self.conversation.process_user_input(text)
+            finally:
+                # Stop thinking indicator
+                stop_thinking.set()
+                thinking_thread.join(timeout=0.5)
             
             print(f"\nKayas: {response}")
             
